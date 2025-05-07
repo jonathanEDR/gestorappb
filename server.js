@@ -24,10 +24,17 @@ const sessionMiddleware = session({
 });
 
 
+const allowedOrigins = [
+  'http://localhost:3000', // Para desarrollo local
+  'https://gestorapp-one.vercel.app' // Dominio de tu frontend en producción
+];
 
+app.get('/', (req, res) => {
+  res.send('Bienvenido al backend de GestorApp');
+});
 
 // Middleware
-app.use(cors({ origin: 'http://localhost:3000', credentials: true}));  // Permite solo solicitudes de este origen (ajusta el puerto si es necesario)
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use(bodyParser.json());
 app.use(sessionMiddleware);
