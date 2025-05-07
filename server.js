@@ -15,6 +15,7 @@ const chatbotRoutes = require('./routes/chatbotRoutes');
 // Crear servidor
 const app = express();
 const server = require('http').createServer(app);
+const PORT = process.env.PORT || 5000;
 
 const sessionMiddleware = session({
   secret: 'tu_clave_secreta_aqui', // Cambia por una clave segura
@@ -26,7 +27,7 @@ const sessionMiddleware = session({
 
 const allowedOrigins = [
   'http://localhost:3000', // Para desarrollo local
-  'https://gestorapp-one.vercel.app' // Dominio de tu frontend en producción
+  'https://gestorapp-oiu0j647e-jonathans-projects-819814ab.vercel.app' // Dominio del frontend en producción
 ];
 
 app.get('/', (req, res) => {
@@ -65,8 +66,7 @@ mongoose.connect(mongodbUri, { useNewUrlParser: true, useUnifiedTopology: true }
 
 
 // Iniciar servidor
-app.listen(5000, () => {
-  console.log('Servidor corriendo en http://localhost:5000');
+app.listen(PORT, () => {
+  console.log(`Servidor corriendo en el puerto ${PORT}`);
 });
-
 
