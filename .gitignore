@@ -1,0 +1,97 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Logs
+logs/
+*.log
+*.log.*
+log/
+
+# Environment variables
+.env
+config/
+
+
+# OS generated files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.bak
+
+# IDEs and editors
+.idea/
+.vscode/
+*.code-workspace
+
+# Dependency directories
+node_modules/
+bower_components/
+
+# Build files
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Coverage reports
+coverage/
+.nyc_output/
+
+# Database files
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Miscellaneous
+*.pid
+*.seed
+*.pid.lock
+
+# Debugging
+debug/
+*.stackdump
+
+# Socket.IO
+socket.io/
+
+# MongoDB
+*.lock
+dump/
+data/
+*.json~
+*.bson
+*.tsv
+
+# Logs and runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# npm cache
+.npm/
+
+# Yarn cache
+.yarn/
+.yarnrc.yml
+
+# ESLint
+.eslintcache
+
+# Prettier
+.prettierignore
+.prettiercache
+
+# Testing
+jest/
+*.test.js
+*.spec.js

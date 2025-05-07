@@ -1,0 +1,27 @@
+{
+    "name": "mi-backend",
+    "version": "1.0.0",
+    "description": "Backend para la aplicación de pagos",
+    "main": "server.js",
+    "scripts": {
+        "start": "node server.js"
+    },
+    "dependencies": {
+        "@clerk/clerk-sdk-node": "^4.13.23",
+        "axios": "^1.8.4",
+        "body-parser": "^1.19.0",
+        "cors": "^2.8.5",
+        "dotenv": "^16.4.7",
+        "express": "^4.17.1",
+        "express-session": "^1.18.1",
+        "mongoose": "^5.10.9",
+        "openai": "^4.91.1",
+        "socket.io": "^4.8.1",
+        "uuid": "^11.1.0"
+    },
+    "engines": {
+        "node": ">=14.0.0"
+    },
+    "author": "",
+    "license": "ISC"
+}
