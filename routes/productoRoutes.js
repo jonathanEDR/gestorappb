@@ -69,10 +69,19 @@ router.put('/:id', authenticate, async (req, res) => {
   const { nombre, precio, precioCompra, cantidad } = req.body;
   const userId = req.user.id;
 
-
   try {
-    // Esta es la línea corregida que estaba causando el error 500
-    const producto = await updateProducto(id, { nombre, precio, precioCompra, cantidad }, userId);
+    if (precioCompra > precio) {
+      return res.status(400).json({ 
+        message: 'El precio de compra no puede ser mayor que el precio de venta' 
+      });
+    }
+
+    const producto = await updateProducto(id, { 
+      ...(nombre && { nombre }),
+      ...(precio && { precio }),
+      ...(precioCompra && { precioCompra }),
+      ...(cantidad !== undefined && { cantidad })
+    }, userId);
 
     if (!producto) {
       return res.status(404).json({ message: 'Producto no encontrado' });
@@ -81,7 +90,17 @@ router.put('/:id', authenticate, async (req, res) => {
     res.json(producto);
   } catch (error) {
     console.error('Error al actualizar producto:', error);
-    res.status(500).json({ message: 'Error al actualizar producto', error: error.message });
+    
+    if (error.message.includes('cantidad ya vendida')) {
+      return res.status(400).json({ 
+        message: 'No se puede establecer una cantidad menor a la cantidad ya vendida' 
+      });
+    }
+
+    res.status(500).json({ 
+      message: 'Error al actualizar producto', 
+      error: error.message 
+    });
   }
 });
 

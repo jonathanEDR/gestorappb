@@ -105,22 +105,39 @@ const updateProducto = async (id, updateData, userId) => {
     throw new Error('Se requiere id del producto y userId para actualizar');
   }
 
-  // Validación de los datos del producto
-  if (updateData.precio <= 0 || updateData.cantidad < 0) {
-    throw new Error('Precio y cantidad deben ser valores positivos');
-  }
-
   try {
-    // Filtrar por userId para asegurarse de que el producto pertenece al usuario
+    // Primero obtener el producto actual
+    const productoActual = await Producto.findOne({ _id: id, userId });
+    
+    if (!productoActual) {
+      return null;
+    }
+
+    // Validar los datos del producto
+    if (updateData.precio && updateData.precio <= 0) {
+      throw new Error('El precio debe ser positivo');
+    }
+    
+    if (updateData.cantidad !== undefined) {
+      if (updateData.cantidad < 0) {
+        throw new Error('La cantidad no puede ser negativa');
+      }
+      
+      // Validar que la nueva cantidad no sea menor que la cantidad vendida
+      if (updateData.cantidad < productoActual.cantidadVendida) {
+        throw new Error('La nueva cantidad no puede ser menor que la cantidad ya vendida');
+      }
+
+      // Calcular la nueva cantidadRestante
+      updateData.cantidadRestante = updateData.cantidad - productoActual.cantidadVendida;
+    }
+
+    // Actualizar el producto con los nuevos datos
     const productoActualizado = await Producto.findOneAndUpdate(
-      { _id: id, userId: userId },
+      { _id: id, userId },
       updateData,
       { new: true, runValidators: true }
     );
-
-    if (!productoActualizado) {
-      return null; // Retorna null si no encuentra un producto o no pertenece al usuario
-    }
 
     return productoActualizado;
   } catch (error) {

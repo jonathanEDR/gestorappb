@@ -4,6 +4,7 @@ const Venta = require('../models/Venta');
 const Colaborador = require('../models/Colaborador');
 const { authenticate } = require('../middleware/authenticate');
 const { getCobros, createCobro, updateCobro, deleteCobro, deleteCobroByColaborador, updateCobroByColaborador } = require('../services/cobroService');
+const Devolucion = require('../models/Devolucion');
 
 const router = express.Router();
 
