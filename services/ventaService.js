@@ -1,5 +1,6 @@
 const Venta = require('../models/Venta');
 const Producto = require('../models/Producto');
+const Devolucion = require('../models/Devolucion');
 
 /**
  * Obtiene todas las ventas para un usuario específico
@@ -61,6 +62,13 @@ async function updateVenta(id, datosActualizados, userId) {
   // Buscar la venta
   const venta = await Venta.findOne({ _id: id, userId });
   if (!venta) return null;
+
+
+  // Verificar si tiene devoluciones
+  const tieneDevoluciones = await Devolucion.findOne({ ventaId: id });
+  if (tieneDevoluciones) {
+    throw new Error('No se puede editar una venta que tiene devoluciones asociadas');
+  }
 
   // Buscar el producto relacionado
   const producto = await Producto.findById(venta.productoId);
@@ -163,19 +171,24 @@ async function deleteVenta(id, userId) {
   const venta = await Venta.findOne({ _id: id, userId });
   if (!venta) return false;
 
+  // Verificar si tiene devoluciones
+  const tieneDevoluciones = await Devolucion.findOne({ ventaId: id });
+  if (tieneDevoluciones) {
+    throw new Error('No se puede eliminar una venta que tiene devoluciones asociadas');
+  }
+
   // Actualizar el producto
   const producto = await Producto.findById(venta.productoId);
   if (producto) {
 
     const nuevaCantidadVendida = producto.cantidadVendida - venta.cantidad;
     if (nuevaCantidadVendida < 0) {
-
-      await producto.save();
+      throw new Error('La cantidad vendida no puede ser negativa');
+    }
+    producto.cantidadVendida = nuevaCantidadVendida;
+    producto.cantidadRestante = producto.cantidad - nuevaCantidadVendida;
+    await producto.save();
   }
-  producto.cantidadVendida = nuevaCantidadVendida;
-  producto.cantidadRestante = producto.cantidad - nuevaCantidadVendida;
-  await producto.save();
-}
 
   // Eliminar la venta
   await Venta.findByIdAndDelete(id);
@@ -190,6 +203,14 @@ async function deleteVenta(id, userId) {
  */
 async function deleteVentaByColaborador(colaboradorId, userId) {
   const ventas = await Venta.find({ colaboradorId, userId });
+
+    // Verificar si alguna venta tiene devoluciones
+  for (const venta of ventas) {
+    const tieneDevoluciones = await Devolucion.findOne({ ventaId: venta._id });
+    if (tieneDevoluciones) {
+      throw new Error('No se pueden eliminar ventas que tienen devoluciones asociadas');
+    }
+  }
   
   // Actualizar productos por cada venta
   for (const venta of ventas) {
@@ -221,6 +242,113 @@ async function updateVentaByColaborador(oldColaboradorId, newColaboradorId, user
   return resultado.modifiedCount;
 }
 
+// Función para gestionar la devolución de una venta
+async function registrarDevolucion(ventaId, productoId, cantidadDevuelta, motivo, userId) {
+  // Verificar que la venta exista
+  const venta = await Venta.findById(ventaId);
+  if (!venta || venta.userId !== userId) {
+    throw new Error("Venta no encontrada");
+  }
+
+  // Verificar que el producto esté relacionado con la venta
+  const producto = await Producto.findById(productoId);
+  if (!producto) {
+    throw new Error("Producto no encontrado");
+  }
+
+  // Verificar que la cantidad a devolver no sea mayor a la vendida
+  if (cantidadDevuelta > venta.cantidad) {
+    throw new Error(`No se puede devolver más productos que los vendidos. Vendidos: ${venta.cantidad}`);
+  }
+
+  // Actualizar la venta
+  venta.cantidadVendida -= cantidadDevuelta;
+  venta.montoTotal -= (producto.precio * cantidadDevuelta);
+  await venta.save();
+
+  // Actualizar el inventario
+  producto.cantidadRestante += cantidadDevuelta;
+  await producto.save();
+
+  // Registrar la devolución
+  const montoDevolucion = producto.precio * cantidadDevuelta;
+  const nuevaDevolucion = new Devolucion({
+    ventaId,
+    productoId,
+    cantidadDevuelta,
+    montoDevolucion,
+    motivo,
+    userId
+  });
+
+  await nuevaDevolucion.save();
+  return nuevaDevolucion;
+}
+
+
+// Agregar nueva función para obtener datos del gráfico
+async function getChartData(userId, range) {
+  const startDate = getStartDate(range);
+  
+  const [ventas, devoluciones] = await Promise.all([
+    Venta.find({
+      userId,
+      fechadeVenta: { $gte: startDate }
+    })
+    .sort({ fechadeVenta: 1 })
+    .populate('colaboradorId', 'nombre')
+    .populate('productoId', 'nombre precio'),
+    
+    Devolucion.find({
+      userId,
+      createdAt: { $gte: startDate }
+    })
+    .populate('ventaId')
+    .populate('productoId')
+  ]);
+
+  return {
+    ventas,
+    devoluciones
+  };
+}
+
+// Modificar la función getVentas para soportar paginación
+async function getVentas(userId, page = 1, limit = 10) {
+  const skip = (page - 1) * limit;
+  
+  const [ventas, total] = await Promise.all([
+    Venta.find({ userId })
+      .sort({ fechadeVenta: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('colaboradorId', 'nombre')
+      .populate('productoId', 'nombre precio'),
+    Venta.countDocuments({ userId })
+  ]);
+
+  return {
+    ventas,
+    totalPages: Math.ceil(total / limit),
+    currentPage: page,
+    totalRecords: total,
+    itemsPerPage: limit
+  };
+}
+
+async function getAllVentas(userId) {
+  try {
+    return await Venta.find({ userId })
+      .sort({ fechadeVenta: -1 })
+      .populate('colaboradorId', 'nombre')
+      .populate('productoId', 'nombre precio');
+  } catch (error) {
+    console.error('Error en getAllVentas:', error);
+    throw error;
+  }
+}
+
+
 module.exports = {
   getVentas,
   createVenta,
@@ -229,4 +357,8 @@ module.exports = {
   deleteVentaByColaborador,
   updateVentaByColaborador,
   updateVentaC,
+  registrarDevolucion,
+    getChartData,
+  getVentas,
+  getAllVentas
 };

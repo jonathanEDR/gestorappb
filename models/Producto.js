@@ -16,6 +16,13 @@ const productoSchema = new mongoose.Schema({
     required: true,
     min: [0, 'El precio no puede ser negativo']  // Validación para precio positivo
   },
+
+  precioCompra: {  
+    type: Number,
+    required: true,
+    min: [0, 'El precio de compra no puede ser negativo']
+  },
+  
   cantidad: { 
     type: Number, 
     required: true,

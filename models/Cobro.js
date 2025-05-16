@@ -24,6 +24,20 @@ const cobroSchema = new mongoose.Schema({
       message: '{VALUE} no es un estado válido'
     }
   },
+
+  yape: {
+    type: Number,
+    default: 0,
+  },
+  efectivo: {
+    type: Number,
+    default: 0,
+  },
+  gastosImprevistos: {
+    type: Number,
+    default: 0,
+  },
+
   fechaPago: {
     type: Date,
     default: Date.now

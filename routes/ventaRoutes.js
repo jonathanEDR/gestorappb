@@ -4,6 +4,7 @@ const Venta = require('../models/Venta');
 const Producto = require('../models/Producto');
 const Colaborador = require('../models/Colaborador');
 const { authenticate } = require('../middleware/authenticate');
+const Devolucion = require('../models/Devolucion'); // Importar el modelo
 
 // Ruta de prueba para verificar que el router funciona
 router.get('/test', (req, res) => {
@@ -114,28 +115,23 @@ async function deleteVentaService(id, userId) {
 // Ruta para obtener todas las ventas
 router.get('/', authenticate, async (req, res) => {
   const userId = req.user.id;
-  const { page = 1, limit = 15 } = req.query;  // Paginación por defecto 15 ventas por página
+
   try {
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-
-    // Obtener las ventas con paginación, ordenadas por fecha de venta
+    // Obtener todas las ventas del usuario sin paginación
     const ventas = await Venta.find({ userId })
-      .sort({ fechadeVenta: -1 })  // Asegúrate de que el campo de fecha se llama "fechaVenta"
-      .skip((pageNum - 1) * limitNum)
-      .limit(limitNum)
-      .populate('productoId')  // Esto está mejor para productos, si es necesario
-      .populate('colaboradorId'); // Esto es para agregar información del colaborador
+      .sort({ fechadeVenta: -1 })  // Ordenar por fecha descendente
+      .populate('productoId')       // Información del producto
+      .populate('colaboradorId');   // Información del colaborador
 
-    // Contar el total de ventas para calcular el número total de páginas
-    const totalVentas = await Venta.countDocuments({ userId });
+    // Contar total de ventas (opcional, pero útil para saber cuántas hay)
+    const totalVentas = ventas.length;
 
-    // Responder con las ventas paginadas
+    // Responder con todas las ventas
     res.json({
-      ventas,  // Asegúrate de que "ventas" se esté enviando como un array
+      ventas,
       totalVentas,
-      totalPages: Math.ceil(totalVentas / limitNum),
-      currentPage: pageNum
+      totalPages: 1,  // Al no haber paginación, solo hay 1 página
+      currentPage: 1
     });
   } catch (error) {
     console.error('Error al obtener ventas:', error);
@@ -218,6 +214,9 @@ router.put('/:id', authenticate, async (req, res) => {
     res.json(ventaActualizada);
   } catch (error) {
     console.error('Error al actualizar la venta:', error);
+        if (error.message.includes('devoluciones asociadas')) {
+      return res.status(400).json({ message: error.message });
+    }
     res.status(500).json({ message: 'Error al actualizar la venta.' });
   }
 });
@@ -237,9 +236,129 @@ router.delete('/:id', authenticate, async (req, res) => {
     res.status(204).send();
   } catch (error) {
     console.error('Error al eliminar la venta:', error);
+        if (error.message.includes('devoluciones asociadas')) {
+      return res.status(400).json({ message: error.message });
+    }
     res.status(500).json({ message: 'Error al eliminar la venta.' });
   }
 });
+
+// Ruta para obtener todas las devoluciones
+router.get('/devoluciones', authenticate, async (req, res) => {
+  const userId = req.user.id;
+  const { page = 1, limit = 10 } = req.query;
+  
+  try {
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    const devoluciones = await Devolucion.find({ userId })
+      .populate({
+        path: 'ventaId',
+        populate: { 
+          path: 'colaboradorId',
+          model: 'Colaborador',
+          select: 'nombre'
+        }
+      })
+      .populate('productoId', 'nombre precio')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await Devolucion.countDocuments({ userId });
+    
+    console.log('Devoluciones encontradas:', devoluciones); // Para debugging
+
+    res.json({
+      devoluciones,
+      currentPage: parseInt(page),
+      totalPages: Math.ceil(total / parseInt(limit))
+    });
+  } catch (error) {
+    console.error('Error al obtener devoluciones:', error);
+    res.status(500).json({ 
+      message: 'Error al obtener devoluciones',
+      error: error.message 
+    });
+  }
+});
+
+// Ruta para crear una devolución
+router.post('/devoluciones', authenticate, async (req, res) => {
+  const { ventaId, productoId, cantidadDevuelta, montoDevolucion, motivo } = req.body;
+  const userId = req.user.id;
+
+  try {
+    const devolucion = new Devolucion({
+      userId,
+      ventaId,
+      productoId,
+      cantidadDevuelta,
+      montoDevolucion,
+      motivo
+    });
+
+    await devolucion.save();
+    
+    // Actualizar el stock del producto
+    await Producto.findByIdAndUpdate(productoId, {
+      $inc: { 
+        cantidadVendida: -cantidadDevuelta,
+        cantidadRestante: cantidadDevuelta
+      }
+    });
+
+    // Actualizar la venta
+    await Venta.findByIdAndUpdate(ventaId, {
+      $inc: { cantidadDevuelta: cantidadDevuelta }
+    });
+
+    const devolucionPopulada = await Devolucion.findById(devolucion._id)
+      .populate('productoId', 'nombre precio')
+      .populate('ventaId');
+
+    res.status(201).json(devolucionPopulada);
+  } catch (error) {
+    console.error('Error al crear devolución:', error);
+    res.status(500).json({ message: 'Error al crear devolución', error: error.message });
+  }
+});
+
+// Agregar después de la ruta POST de devoluciones
+router.delete('/devoluciones/:id', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+
+  try {
+    // Buscar la devolución
+    const devolucion = await Devolucion.findOne({ _id: id, userId });
+    if (!devolucion) {
+      return res.status(404).json({ message: 'Devolución no encontrada' });
+    }
+
+    // Revertir los cambios en el stock del producto
+    await Producto.findByIdAndUpdate(devolucion.productoId, {
+      $inc: { 
+        cantidadVendida: devolucion.cantidadDevuelta,
+        cantidadRestante: -devolucion.cantidadDevuelta
+      }
+    });
+
+    // Actualizar la venta
+    await Venta.findByIdAndUpdate(devolucion.ventaId, {
+      $inc: { cantidadDevuelta: -devolucion.cantidadDevuelta }
+    });
+
+    // Eliminar la devolución
+    await Devolucion.findByIdAndDelete(id);
+
+    res.json({ message: 'Devolución eliminada correctamente' });
+  } catch (error) {
+    console.error('Error al eliminar la devolución:', error);
+    res.status(500).json({ message: 'Error al eliminar la devolución' });
+  }
+});
+
 
 // ===== FUNCIONES PARA REPORTES =====
 

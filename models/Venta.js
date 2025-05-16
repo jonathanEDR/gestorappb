@@ -30,6 +30,13 @@ const ventaSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,  // Establecer fecha por defecto
   },
+
+  cantidadDevuelta: {
+    type: Number,
+    default: 0,
+    min: 0
+  }
+
   },
   {
   timestamps: true, // Esto agrega createdAt y updatedAt automáticamente

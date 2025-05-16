@@ -14,7 +14,6 @@ const chatbotRoutes = require('./routes/chatbotRoutes');
 
 // Crear servidor
 const app = express();
-const PORT = process.env.PORT || 5000;
 
 const sessionMiddleware = session({
   secret: 'tu_clave_secreta_aqui', // Cambia por una clave segura
@@ -62,6 +61,5 @@ mongoose.connect(mongodbUri, { useNewUrlParser: true, useUnifiedTopology: true }
   .catch((error) => {
     console.error('Error al conectar con MongoDB:', error);
   });
-
 
 module.exports = app; 

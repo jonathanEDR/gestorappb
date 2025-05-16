@@ -60,11 +60,11 @@ async function getDebtInfo(colaboradorId) {
 // Crear un nuevo cobro
 router.post('/', authenticate, async (req, res) => {
   console.log('Datos recibidos en el backend:', req.body);
-  const { colaboradorId, montoPagado, estadoPago } = req.body;
+  const { colaboradorId, yape, efectivo, gastosImprevistos, montoPagado, estadoPago } = req.body;
   const userId = req.user.id;
 
   try {
-    if (!colaboradorId || !montoPagado || !estadoPago) {
+    if (!colaboradorId || !yape || !efectivo || !gastosImprevistos || !montoPagado || !estadoPago) {
       return res.status(400).json({ message: 'Faltan datos necesarios' });
     }
 
@@ -95,6 +95,9 @@ router.post('/', authenticate, async (req, res) => {
     // Create new cobro
     const nuevoCobro = new Cobro({
       colaboradorId,
+      yape,
+      efectivo,
+      gastosImprevistos,
       montoPagado: Number(montoPagado),
       estadoPago,
       fechaPago: new Date(),
@@ -119,7 +122,7 @@ router.put('/:id', authenticate, async (req, res) => {
   const userId = req.user.id;
 
   try {
-    const cobro = await Cobro.findOneAndUpdate({ _id: id, userId }, { estadoPago }, { new: true });
+    const cobro = await Cobro.findOneAndUpdate({ _id: id, userId }, { estadoPago, yape, efectivo, gastosImprevistos }, { new: true });
     if (!cobro) {
       return res.status(404).json({ message: 'Cobro no encontrado o no pertenece al usuario' });
     }

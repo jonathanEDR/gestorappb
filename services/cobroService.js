@@ -19,14 +19,17 @@ const getCobros = async (userId) => {
 // Crear un nuevo cobro
 const createCobro = async (userId, cobroData) => {
   try {
-    if (!userId || !cobroData.colaboradorId || !cobroData.montoPagado || !cobroData.estadoPago) {
+    if (!userId || !cobroData.colaboradorId || !cobroData.montoPagado || !cobroData.estadoPago || !cobroData.yape || !cobroData.efectivo || !cobroData.gastosImprevistos) {
       throw new Error('Faltan campos requeridos');
     }
 
     // Añadir el userId al cobro para asociarlo al usuario autenticado
     const newCobro = new Cobro({
       ...cobroData,
-      userId
+      userId,
+      yape: cobroData.yape, // Incluir Yape
+      efectivo: cobroData.efectivo, // Incluir Efectivo
+      gastosImprevistos: cobroData.gastosImprevistos
     });
 
     await newCobro.save();

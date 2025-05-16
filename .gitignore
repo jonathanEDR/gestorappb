@@ -12,6 +12,7 @@ log/
 
 # Environment variables
 .env
+local.js
 config/
 
 

@@ -23,15 +23,19 @@ router.get('/', authenticate, async (req, res) => {
 
 // Ruta para agregar un producto
 router.post('/', authenticate, async (req, res) => {
-  const { nombre, precio, cantidad } = req.body;  
+  const { nombre, precio, precioCompra, cantidad } = req.body;  
   const userId = req.user.id;  
   
-  if (!nombre || !precio || !cantidad) {
+  if (!nombre || !precio || !precioCompra || !cantidad) {
     return res.status(400).json({ message: 'Faltan datos importantes' });
   }
 
+    if (precioCompra > precio) {
+    return res.status(400).json({ message: 'El precio de compra no puede ser mayor que el precio de venta' });
+  }
+
   try {
-    const nuevoProducto = await createProducto({userId, nombre, precio, cantidad});
+    const nuevoProducto = await createProducto({userId, nombre, precio, precioCompra, cantidad});
     res.status(201).json(nuevoProducto);
   } catch (error) {
     console.error('Error al crear producto:', error);
@@ -62,13 +66,14 @@ router.delete('/:id', authenticate, async (req, res) => {
 // Ruta para actualizar un producto
 router.put('/:id', authenticate, async (req, res) => {
   const { id } = req.params;
-  const { nombre, precio, cantidad } = req.body;
+  const { nombre, precio, precioCompra, cantidad } = req.body;
   const userId = req.user.id;
+
 
   try {
     // Esta es la línea corregida que estaba causando el error 500
-    const producto = await updateProducto(id, { nombre, precio, cantidad }, userId);
-    
+    const producto = await updateProducto(id, { nombre, precio, precioCompra, cantidad }, userId);
+
     if (!producto) {
       return res.status(404).json({ message: 'Producto no encontrado' });
     }
