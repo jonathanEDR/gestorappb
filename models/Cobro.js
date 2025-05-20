@@ -11,6 +11,13 @@ const cobroSchema = new mongoose.Schema({
     ref: 'Colaborador',
     required: [true, 'El colaborador es requerido']
   },
+
+  ventasId: [{
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Venta',
+  required: true
+}],
+
   montoPagado: {
     type: Number,
     required: [true, 'El monto pagado es requerido'],
@@ -40,7 +47,8 @@ const cobroSchema = new mongoose.Schema({
 
   fechaPago: {
     type: Date,
-    default: Date.now
+    default: Date.now,  // Establecer fecha por defecto
+
   }
 }, {
   timestamps: true

@@ -57,17 +57,21 @@ async function createVenta(ventaData) {
  * @returns {Promise<Object>} Venta actualizada
  */
 async function updateVenta(id, datosActualizados, userId) {
-  const { cantidad, estadoPago, cantidadPagada } = datosActualizados;
-  
-  // Buscar la venta
   const venta = await Venta.findOne({ _id: id, userId });
   if (!venta) return null;
 
+  const { cantidad, estadoPago, cantidadPagada, fechadeVenta } = datosActualizados;
 
-  // Verificar si tiene devoluciones
+  // Verificar si tiene devoluciones antes de actualizar cualquier dato
   const tieneDevoluciones = await Devolucion.findOne({ ventaId: id });
   if (tieneDevoluciones) {
     throw new Error('No se puede editar una venta que tiene devoluciones asociadas');
+  }
+
+  // Actualizar fechadeVenta si viene
+  if (fechadeVenta) {
+    venta.fechadeVenta = fechadeVenta;
+    venta.markModified('fechadeVenta'); // Forzar a mongoose a detectar el cambio
   }
 
   // Buscar el producto relacionado
@@ -75,13 +79,13 @@ async function updateVenta(id, datosActualizados, userId) {
   if (!producto) throw new Error('Producto relacionado no encontrado');
 
   // Actualizar cantidad si es necesario
-  if (cantidad && cantidad !== venta.cantidad) {
+  if (cantidad !== undefined && cantidad !== venta.cantidad) {
     const nuevaCantidadVendida = producto.cantidadVendida - venta.cantidad + cantidad;
-    
+
     if (nuevaCantidadVendida < 0) {
       throw new Error('La cantidad vendida no puede ser negativa.');
     }
-   
+
     if (nuevaCantidadVendida > producto.cantidad) {
       throw new Error(`No hay suficiente stock. Solo hay ${producto.cantidad - producto.cantidadVendida + venta.cantidad} unidades disponibles.`);
     }
@@ -100,14 +104,13 @@ async function updateVenta(id, datosActualizados, userId) {
   if (estadoPago) venta.estadoPago = estadoPago;
   if (cantidadPagada !== undefined) venta.cantidadPagada = cantidadPagada;
 
-  // Guardar cambios
   await venta.save();
 
-  // Retornar venta con detalles
   return await Venta.findById(id)
     .populate('colaboradorId', 'nombre')
     .populate('productoId', 'nombre precio');
 }
+
 
 async function updateVentaC(id, datosActualizados, userId) {
   const { cantidad, estadoPago, cantidadPagada } = datosActualizados;

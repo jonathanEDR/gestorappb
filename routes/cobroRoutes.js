@@ -5,63 +5,161 @@ const Colaborador = require('../models/Colaborador');
 const { authenticate } = require('../middleware/authenticate');
 const { getCobros, createCobro, updateCobro, deleteCobro, deleteCobroByColaborador, updateCobroByColaborador } = require('../services/cobroService');
 const Devolucion = require('../models/Devolucion');
+const moment = require('moment-timezone');
 
 const router = express.Router();
 
-// Código para el backend actualizado - Ruta GET para cobros
+// Modificar la ruta GET existente
 router.get('/', authenticate, async (req, res) => {
   const userId = req.user.id;
-  const { page = 1, limit = 15 } = req.query;  // Paginación: página y límite por defecto a 15
-  
   try {
-    // Convertir los parámetros de la consulta a números
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    
-    // Obtener los cobros paginados y ordenados por la fecha de pago
     const cobros = await Cobro.find({ userId })
-      .sort({ fechaPago: -1 })  // Ordenar los cobros más recientes primero
-      .skip((pageNum - 1) * limitNum)  // Saltar los cobros previos de la página
-      .limit(limitNum)  // Limitar a 15 cobros por página
-      .populate('colaboradorId');
+      .populate('colaboradorId', 'nombre') // Añade esto para poblar el nombre del colaborador
+      .sort({ fechaPago: -1 });
     
-    // Obtener el total de cobros para calcular las páginas
-    const totalCobros = await Cobro.countDocuments({ userId });
-    
-    // Respuesta con formato compatible
     res.json({
       cobros,
-      totalCobros,
-      totalPages: Math.ceil(totalCobros / limitNum),
-      currentPage: pageNum
+      totalPages: Math.ceil(cobros.length / 15),
+      currentPage: 1
     });
   } catch (error) {
-    console.error('Error al obtener cobros:', error);
     res.status(500).json({ message: 'Error al obtener los cobros' });
   }
 });
 
+
+
 // Helper function to calculate total debt and payments
 async function getDebtInfo(colaboradorId) {
-  // Get total from sales
-  const ventas = await Venta.find({ colaboradorId });
-  const totalDebt = ventas.reduce((sum, venta) => sum + venta.montoTotal, 0);
+  try {
+    // Get total from sales
+    const ventas = await Venta.find({ colaboradorId });
+    const totalDebt = ventas.reduce((sum, venta) => sum + venta.montoTotal, 0);
 
-  // Get total payments
-  const cobros = await Cobro.find({ colaboradorId });
-  const totalPaid = cobros.reduce((sum, cobro) => sum + cobro.montoPagado, 0);
+    // Get payments only for partial payments
+    const cobros = await Cobro.find({ 
+      colaboradorId,
+      estadoPago: 'parcial' // Solo obtener cobros parciales
+    });
 
-  return {
-    totalDebt,
-    totalPaid,
-    remainingDebt: totalDebt - totalPaid
-  };
+    // Sum only partial payments
+    const totalPaid = cobros.reduce((sum, cobro) => sum + cobro.montoPagado, 0);
+
+    // Get payments with total status
+    const cobrosTotales = await Cobro.find({
+      colaboradorId,
+      estadoPago: 'total'
+    });
+
+    // Calculate amount paid in full
+    const montoPagadoTotal = cobrosTotales.reduce((sum, cobro) => sum + cobro.montoPagado, 0);
+
+    // Subtract fully paid amounts from total debt
+    const deudaReal = totalDebt - montoPagadoTotal;
+    
+    return {
+      totalDebt: deudaReal, // Mostrar solo la deuda pendiente real
+      totalPaid,
+      remainingDebt: deudaReal - totalPaid
+    };
+  } catch (error) {
+    console.error('Error en getDebtInfo:', error);
+    throw error;
+  }
 }
+
+// Nueva función para calcular la deuda pendiente por rango de fechas
+async function getDebtByDateRange(colaboradorId, deudaRange) {
+  try {
+    const now = new Date();
+    let startDate = new Date();
+    let endDate = new Date();
+
+    // Determinar el rango de fechas según deudaRange
+    switch (deudaRange) {
+      case 'day':
+        startDate.setHours(0, 0, 0, 0);  // Hoy a las 00:00
+        endDate.setHours(23, 59, 59, 999);  // Hoy hasta las 23:59
+        break;
+      case 'week':
+        startDate.setDate(now.getDate() - now.getDay());  // Inicio de la semana
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setDate(startDate.getDate() + 6);  // Fin de la semana
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'month':
+        startDate.setDate(1);  // Primer día del mes
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setMonth(now.getMonth() + 1, 0);  // Último día del mes anterior
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'year':
+        startDate.setMonth(0, 1);  // Primer día del año
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setMonth(11, 31);  // Último día del año
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'historical':
+        startDate = null;
+        endDate = null;
+        break;
+      default:
+        startDate.setDate(1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setMonth(now.getMonth() + 1, 0);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+    }
+
+    // Obtener ventas del colaborador dentro del rango de fechas
+    const ventas = await Venta.find({
+      colaboradorId,
+      fechadeVenta: { $gte: startDate, $lte: endDate }  // Filtrar ventas dentro del rango
+    });
+
+    // Calcular la deuda total de ventas
+    const totalDebt = ventas.reduce((sum, venta) => sum + venta.montoTotal, 0);
+
+    // Obtener pagos parciales dentro del rango de fechas
+    const cobrosParciales = await Cobro.find({
+      colaboradorId,
+      estadoPago: 'parcial',
+      fechaPago: { $gte: startDate, $lte: endDate }  // Filtrar cobros parciales dentro del rango
+    });
+
+    const totalPaid = cobrosParciales.reduce((sum, cobro) => sum + cobro.montoPagado, 0);
+
+    // Obtener pagos completos dentro del rango de fechas
+    const cobrosTotales = await Cobro.find({
+      colaboradorId,
+      estadoPago: 'total',
+      fechaPago: { $gte: startDate, $lte: endDate }  // Filtrar cobros completos dentro del rango
+    });
+
+    const montoPagadoTotal = cobrosTotales.reduce((sum, cobro) => sum + cobro.montoPagado, 0);
+
+    // Calcular la deuda real restando los pagos completos
+    const deudaReal = totalDebt - montoPagadoTotal;
+
+    // Calcular la deuda pendiente restando los pagos parciales
+    const remainingDebt = deudaReal - totalPaid;
+
+    return {
+      totalDebt: deudaReal,  // Deuda total real
+      totalPaid,
+      remainingDebt,  // Deuda pendiente
+    };
+  } catch (error) {
+    console.error('Error al obtener la deuda pendiente por rango de fechas:', error);
+    throw error;
+  }
+}
+
 
 // Crear un nuevo cobro
 router.post('/', authenticate, async (req, res) => {
   console.log('Datos recibidos en el backend:', req.body);
-  const { colaboradorId, yape, efectivo, gastosImprevistos, montoPagado, estadoPago } = req.body;
+  const { colaboradorId, yape, efectivo, gastosImprevistos, montoPagado, estadoPago, fechaPago } = req.body;
   const userId = req.user.id;
 
   try {
@@ -69,31 +167,39 @@ router.post('/', authenticate, async (req, res) => {
       return res.status(400).json({ message: 'Faltan datos necesarios' });
     }
 
-    // Check if colaborador exists
-    const colaborador = await Colaborador.findById(colaboradorId);
-    if (!colaborador) {
-      return res.status(404).json({ message: 'Colaborador no encontrado' });
+    // Manejo específico de la fecha con zona horaria
+    let fechaFinal;
+    if (fechaPago) {
+      // Convertir la fecha a la zona horaria de Peru (America/Lima)
+      fechaFinal = moment.tz(fechaPago, 'America/Lima').toDate();
+      
+      // Asegurarse de que la fecha sea válida
+      if (isNaN(fechaFinal.getTime())) {
+        return res.status(400).json({ message: 'Fecha inválida' });
+      }
+
+      // Ajustar la fecha para que sea a las 12 del mediodía en Lima
+      // Esto evita problemas con el cambio de día debido a UTC
+      fechaFinal = moment.tz(fechaFinal, 'America/Lima')
+        .hour(12)
+        .minute(0)
+        .second(0)
+        .millisecond(0)
+        .toDate();
+    } else {
+      // Si no hay fecha, usar la fecha actual en Lima
+      fechaFinal = moment.tz('America/Lima')
+        .hour(12)
+        .minute(0)
+        .second(0)
+        .millisecond(0)
+        .toDate();
     }
 
-    // Get ventas for this colaborador
-    const ventas = await Venta.find({ colaboradorId });
-    const totalDeuda = ventas.reduce((sum, venta) => sum + venta.montoTotal, 0);
+    console.log('Fecha original recibida:', fechaPago);
+    console.log('Fecha ajustada a zona horaria:', fechaFinal);
 
-    // Get existing cobros
-    const cobrosExistentes = await Cobro.find({ colaboradorId });
-    const totalPagado = cobrosExistentes.reduce((sum, cobro) => sum + cobro.montoPagado, 0);
-
-    // Calculate remaining debt
-    const deudaPendiente = totalDeuda - totalPagado;
-
-    // Validate payment amount
-    if (montoPagado > deudaPendiente) {
-      return res.status(400).json({
-        message: `El pago (${montoPagado}) excede la deuda pendiente (${deudaPendiente})`
-      });
-    }
-
-    // Create new cobro
+    // Crear nuevo cobro con la fecha ajustada
     const nuevoCobro = new Cobro({
       colaboradorId,
       yape,
@@ -101,18 +207,29 @@ router.post('/', authenticate, async (req, res) => {
       gastosImprevistos,
       montoPagado: Number(montoPagado),
       estadoPago,
-      fechaPago: new Date(),
+      fechaPago: fechaFinal,
       userId
     });
 
     await nuevoCobro.save();
 
-    // Populate colaborador data
-    const cobroPopulated = await Cobro.findById(nuevoCobro._id).populate('colaboradorId');
-    res.status(201).json(cobroPopulated);
+    // Populate colaborador data y ajustar la fecha en la respuesta
+    const cobroPopulated = await Cobro.findById(nuevoCobro._id)
+      .populate('colaboradorId');
+
+    // Formatear la fecha en la respuesta
+    const cobroResponse = cobroPopulated.toObject();
+    cobroResponse.fechaPago = moment(cobroResponse.fechaPago)
+      .tz('America/Lima')
+      .format('YYYY-MM-DD');
+
+    res.status(201).json(cobroResponse);
   } catch (error) {
     console.error('Error detallado:', error);
-    res.status(500).json({ message: 'Error al registrar el cobro', error: error.message });
+    res.status(500).json({ 
+      message: 'Error al registrar el cobro', 
+      error: error.message 
+    });
   }
 });
 
@@ -209,5 +326,19 @@ router.get('/reportes/pagos', authenticate, async (req, res) => {
     res.status(500).json({ message: 'Error al obtener el informe de pagos', error });
   }
 });
+
+router.get('/ventas-pendientes/:colaboradorId', authenticate, async (req, res) => {
+  const { colaboradorId } = req.params;
+  try {
+    const ventasPendientes = await Venta.find({ 
+      colaboradorId,
+      estadoPago: { $in: ['Pendiente', 'Parcial'] }
+    }).populate('productoId');
+    res.json(ventasPendientes);
+  } catch (error) {
+    res.status(500).json({ message: 'Error al obtener ventas pendientes', error: error.message });
+  }
+});
+
 
 module.exports = router;

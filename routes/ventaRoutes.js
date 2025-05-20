@@ -66,33 +66,6 @@ async function createVentaService(ventaData) {
     .populate('productoId', 'nombre precio');
 }
 
-// Función para actualizar venta
-async function updateVentaService(id, datos, userId) {
-  const venta = await Venta.findOne({ _id: id, userId });
-  if (!venta) return null;
-
-  const producto = await Producto.findById(venta.productoId);
-  if (!producto) throw new Error('Producto relacionado no encontrado');
-
-  // Actualizar campos de la venta
-  if (datos.cantidad && datos.cantidad !== venta.cantidad) {
-    const nuevaCantidadVendida = producto.cantidadVendida - venta.cantidad + datos.cantidad;
-    producto.cantidadVendida = nuevaCantidadVendida;
-    producto.cantidadRestante = producto.cantidad - nuevaCantidadVendida;
-    await producto.save();
-
-    venta.cantidad = datos.cantidad;
-    venta.montoTotal = producto.precio * datos.cantidad;
-  }
-
-  if (datos.estadoPago) venta.estadoPago = datos.estadoPago;
-  if (datos.cantidadPagada !== undefined) venta.cantidadPagada = datos.cantidadPagada;
-
-  await venta.save();
-  return await Venta.findById(id)
-    .populate('colaboradorId', 'nombre')
-    .populate('productoId', 'nombre precio');
-}
 
 // Función para eliminar venta
 async function deleteVentaService(id, userId) {
@@ -141,7 +114,7 @@ router.get('/', authenticate, async (req, res) => {
 
 // Ruta para crear una nueva venta
 router.post('/', authenticate, async (req, res) => {
-  const { colaboradorId, productoId, cantidad, montoTotal, estadoPago, cantidadPagada } = req.body;
+  const { colaboradorId, productoId, cantidad, montoTotal, estadoPago, cantidadPagada,fechadeVenta } = req.body;
   const userId = req.user.id;
 
   try {
@@ -186,6 +159,10 @@ router.post('/', authenticate, async (req, res) => {
       userId
     };
 
+  if (fechadeVenta) {
+    ventaData.fechadeVenta = new Date(fechadeVenta);  // convertir string a fecha
+  }
+
     const nuevaVenta = await createVentaService(ventaData);
     res.status(201).json(nuevaVenta);
   } catch (error) {
@@ -194,32 +171,6 @@ router.post('/', authenticate, async (req, res) => {
   }
 });
 
-// Ruta para actualizar una venta
-router.put('/:id', authenticate, async (req, res) => {
-  const { id } = req.params;
-  const { cantidad, estadoPago, cantidadPagada } = req.body;
-  const userId = req.user.id;
-
-  try {
-    const ventaActualizada = await updateVentaService(id, {
-      cantidad, 
-      estadoPago, 
-      cantidadPagada 
-    }, userId);
-    
-    if (!ventaActualizada) {
-      return res.status(404).json({ message: 'Venta no encontrada' });
-    }
-    
-    res.json(ventaActualizada);
-  } catch (error) {
-    console.error('Error al actualizar la venta:', error);
-        if (error.message.includes('devoluciones asociadas')) {
-      return res.status(400).json({ message: error.message });
-    }
-    res.status(500).json({ message: 'Error al actualizar la venta.' });
-  }
-});
 
 // Ruta para eliminar una venta
 router.delete('/:id', authenticate, async (req, res) => {
@@ -394,6 +345,95 @@ router.delete('/devoluciones/:id', authenticate, async (req, res) => {
   }
 });
 
+
+// Ruta para obtener ventas filtradas por rango de fechas
+router.get('/ventas-filtradas', authenticate, async (req, res) => {
+  const userId = req.user.id;
+  const { startDate, endDate, rango } = req.query; // Aceptar ambos tipos de parámetros
+  
+  try {
+    let queryStartDate, queryEndDate;
+    
+    // Si se proporcionan startDate y endDate directamente, usarlos
+    if (startDate && endDate) {
+      queryStartDate = new Date(startDate);
+      queryEndDate = new Date(endDate);
+    } 
+    // Si no, calcular fechas basadas en el rango
+    else if (rango) {
+      const now = new Date();
+      queryStartDate = new Date();
+      queryEndDate = new Date();
+      
+      // Configurar las fechas según el rango
+      switch (rango) {
+        case 'day':
+          queryStartDate.setHours(0, 0, 0, 0);
+          queryEndDate.setHours(23, 59, 59, 999);
+          break;
+        case 'week':
+          queryStartDate.setDate(now.getDate() - now.getDay());  // Inicio de la semana
+          queryStartDate.setHours(0, 0, 0, 0);
+          queryEndDate.setDate(queryStartDate.getDate() + 6);  // Fin de la semana
+          queryEndDate.setHours(23, 59, 59, 999);
+          break;
+        case 'month':
+          queryStartDate.setDate(1);  // Primer día del mes
+          queryStartDate.setHours(0, 0, 0, 0);
+          queryEndDate.setMonth(now.getMonth() + 1, 0);  // Último día del mes
+          queryEndDate.setHours(23, 59, 59, 999);
+          break;
+        case 'year':
+          queryStartDate.setMonth(0, 1);  // Primer día del año
+          queryStartDate.setHours(0, 0, 0, 0);
+          queryEndDate.setMonth(11, 31);  // Último día del año
+          queryEndDate.setHours(23, 59, 59, 999);
+          break;
+        case 'historical':
+          queryStartDate = null;
+          queryEndDate = null;
+          break;
+        default:
+          queryStartDate.setDate(1);
+          queryStartDate.setHours(0, 0, 0, 0);
+          queryEndDate.setMonth(now.getMonth() + 1, 0);
+          queryEndDate.setHours(23, 59, 59, 999);
+          break;
+      }
+    } else {
+      // Valores predeterminados (mes actual)
+      const now = new Date();
+      queryStartDate = new Date();
+      queryEndDate = new Date();
+      queryStartDate.setDate(1);
+      queryStartDate.setHours(0, 0, 0, 0);
+      queryEndDate.setMonth(now.getMonth() + 1, 0);
+      queryEndDate.setHours(23, 59, 59, 999);
+    }
+    
+    // Construir la consulta de filtrado
+    let query = { userId };
+    
+    // Añadir filtro de fechas si no es histórico
+    if (queryStartDate !== null && queryEndDate !== null) {
+      // Cambiar de `fechaCobro` a `fechaVenta`
+      query.fechaVenta = { 
+        $gte: queryStartDate, 
+        $lte: queryEndDate 
+      };
+    }
+
+    // Filtrar las ventas
+    const ventas = await Venta.find(query)
+      .populate('colaboradorId', 'nombre')
+      .populate('productoId', 'nombre precio');
+    
+    res.json({ ventas });
+  } catch (error) {
+    console.error('Error al obtener ventas filtradas:', error);
+    res.status(500).json({ message: 'Error al obtener ventas filtradas', error: error.message });
+  }
+});
 
 // ===== FUNCIONES PARA REPORTES =====
 
