@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { obtenerFechaActual, convertirFechaAFechaLocal, convertirFechaALocalUtc } = require('../utils/fechaHoraUtils');
+
 const Venta = require('../models/Venta');
 const Producto = require('../models/Producto');
 const Colaborador = require('../models/Colaborador');
@@ -96,6 +98,14 @@ router.get('/', authenticate, async (req, res) => {
       .populate('productoId')       // Información del producto
       .populate('colaboradorId');   // Información del colaborador
 
+    // 🔍 LOG PARA VERIFICAR
+    console.log('Ventas desde DB:', ventas.map(v => ({
+      id: v._id,
+      fechadeVenta: v.fechadeVenta,
+      fechaISO: v.fechadeVenta.toISOString()
+    })));
+
+
     // Contar total de ventas (opcional, pero útil para saber cuántas hay)
     const totalVentas = ventas.length;
 
@@ -111,6 +121,7 @@ router.get('/', authenticate, async (req, res) => {
     res.status(500).json({ message: 'Error al obtener ventas' });
   }
 });
+
 
 // Ruta para crear una nueva venta
 router.post('/', authenticate, async (req, res) => {
@@ -148,6 +159,9 @@ router.post('/', authenticate, async (req, res) => {
       return res.status(400).json({ message: 'La cantidad pagada debe ser igual al monto total cuando el estado es Pagado.' });
     }
 
+    const fechaVenta = fechadeVenta ? convertirFechaALocalUtc(fechadeVenta) : convertirFechaALocalUtc(obtenerFechaActual());
+
+
     // Crear la venta
     const ventaData = {
       colaboradorId,
@@ -156,7 +170,8 @@ router.post('/', authenticate, async (req, res) => {
       montoTotal,
       estadoPago,
       cantidadPagada,
-      userId
+      userId,
+      fechadeVenta: fechaVenta
     };
 
   if (fechadeVenta) {
@@ -276,14 +291,15 @@ router.post('/devoluciones', authenticate, async (req, res) => {
       }
     });
 
-    // Calcular el nuevo montoTotal de la venta
+    // Calcular el nuevo montoTotal y actualizar la cantidad de la venta
     const montoAReducir = producto.precio * cantidadDevuelta;
-    
-    // Actualizar la venta con la cantidad devuelta y el nuevo montoTotal
+
+    // Actualizar la venta con todos los cambios necesarios
     await Venta.findByIdAndUpdate(ventaId, {
       $inc: { 
         cantidadDevuelta: cantidadDevuelta,
-        montoTotal: -montoAReducir
+        montoTotal: -montoAReducir,
+        cantidad: -cantidadDevuelta  // Reducir la cantidad original de la venta
       }
     });
 

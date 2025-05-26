@@ -1,6 +1,7 @@
 const Venta = require('../models/Venta');
 const Producto = require('../models/Producto');
 const Devolucion = require('../models/Devolucion');
+const { convertirFechaALocalUtc, obtenerFechaActual } = require('../utils/fechaHoraUtils');
 
 /**
  * Obtiene todas las ventas para un usuario específico
@@ -18,10 +19,29 @@ async function getVentas(userId) {
  * @param {Object} ventaData - Datos de la venta
  * @returns {Promise<Object>} Venta creada
  */
+
 async function createVenta(ventaData) {
-  const { colaboradorId, productoId, cantidad, montoTotal, estadoPago, cantidadPagada, userId } = ventaData;
+  const { 
+    colaboradorId, 
+    productoId, 
+    cantidad, 
+    montoTotal, 
+    estadoPago, 
+    cantidadPagada, 
+    userId, 
+    fechadeVenta 
+  } = ventaData;
+
   
-  // Crear la venta
+  // Manejar la fecha de forma consistente
+  let fechaFinal;
+  if (fechadeVenta) {
+    fechaFinal = convertirFechaALocalUtc(fechadeVenta);
+  } else {
+    fechaFinal = obtenerFechaActual();
+  }
+
+  // CREAR LA VENTA CON FECHA/HORA ACTUAL
   const nuevaVenta = new Venta({
     colaboradorId,
     productoId,
@@ -29,23 +49,44 @@ async function createVenta(ventaData) {
     montoTotal,
     estadoPago,
     cantidadPagada,
-    userId
+    userId,
+    fechadeVenta: fechaFinal
   });
+
+  console.log('7. Objeto venta antes de guardar:', {
+    fechadeVenta: nuevaVenta.fechadeVenta,
+    fechaISO: nuevaVenta.fechadeVenta.toISOString()
+  });
+
+  // GUARDAR EN LA BASE DE DATOS
+  const ventaGuardada = await nuevaVenta.save();
   
-  // Guardar la venta
-  await nuevaVenta.save();
-  
-  // Actualizar el stock del producto
+  console.log('8. Venta guardada en DB:', {
+    id: ventaGuardada._id,
+    fechadeVenta: ventaGuardada.fechadeVenta,
+    fechaISO: ventaGuardada.fechadeVenta.toISOString(),
+    fechaString: ventaGuardada.fechadeVenta.toString()
+  });
+
+  // Actualizar stock del producto
   const producto = await Producto.findById(productoId);
   producto.cantidadVendida += cantidad;
   producto.cantidadRestante = producto.cantidad - producto.cantidadVendida;
   await producto.save();
-  
-  // Retornar la venta con detalles
+
+  // Retornar la venta completa
   const ventaCompleta = await Venta.findById(nuevaVenta._id)
     .populate('colaboradorId', 'nombre')
     .populate('productoId', 'nombre precio');
-    
+
+  console.log('9. Venta completa retornada:', {
+    id: ventaCompleta._id,
+    fechadeVenta: ventaCompleta.fechadeVenta,
+    fechaISO: ventaCompleta.fechadeVenta.toISOString()
+  });
+
+  console.log('=====================');
+  
   return ventaCompleta;
 }
 
@@ -70,8 +111,8 @@ async function updateVenta(id, datosActualizados, userId) {
 
   // Actualizar fechadeVenta si viene
   if (fechadeVenta) {
-    venta.fechadeVenta = fechadeVenta;
-    venta.markModified('fechadeVenta'); // Forzar a mongoose a detectar el cambio
+    venta.fechadeVenta = convertirFechaALocalUtc(fechadeVenta);
+    venta.markModified('fechadeVenta');
   }
 
   // Buscar el producto relacionado
@@ -109,6 +150,11 @@ async function updateVenta(id, datosActualizados, userId) {
   return await Venta.findById(id)
     .populate('colaboradorId', 'nombre')
     .populate('productoId', 'nombre precio');
+}
+
+function validarFecha(fecha) {
+  const fechaDate = new Date(fecha);
+  return fechaDate instanceof Date && !isNaN(fechaDate);
 }
 
 
@@ -350,6 +396,7 @@ async function getAllVentas(userId) {
     throw error;
   }
 }
+
 
 
 module.exports = {

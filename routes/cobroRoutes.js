@@ -5,7 +5,9 @@ const Colaborador = require('../models/Colaborador');
 const { authenticate } = require('../middleware/authenticate');
 const { getCobros, createCobro, updateCobro, deleteCobro, deleteCobroByColaborador, updateCobroByColaborador } = require('../services/cobroService');
 const Devolucion = require('../models/Devolucion');
+const { obtenerFechaActual, convertirFechaAFechaLocal, convertirFechaALocalUtc } = require('../utils/fechaHoraUtils');
 const moment = require('moment-timezone');
+
 
 const router = express.Router();
 
@@ -170,34 +172,19 @@ router.post('/', authenticate, async (req, res) => {
     // Manejo específico de la fecha con zona horaria
     let fechaFinal;
     if (fechaPago) {
-      // Convertir la fecha a la zona horaria de Peru (America/Lima)
-      fechaFinal = moment.tz(fechaPago, 'America/Lima').toDate();
-      
+      // Usamos la función para convertir la fecha a UTC antes de guardarla
+      fechaFinal = convertirFechaALocalUtc(fechaPago);  // Convertimos la fecha local a UTC
       // Asegurarse de que la fecha sea válida
-      if (isNaN(fechaFinal.getTime())) {
+      if (isNaN(new Date(fechaFinal).getTime())) {
         return res.status(400).json({ message: 'Fecha inválida' });
       }
-
-      // Ajustar la fecha para que sea a las 12 del mediodía en Lima
-      // Esto evita problemas con el cambio de día debido a UTC
-      fechaFinal = moment.tz(fechaFinal, 'America/Lima')
-        .hour(12)
-        .minute(0)
-        .second(0)
-        .millisecond(0)
-        .toDate();
     } else {
-      // Si no hay fecha, usar la fecha actual en Lima
-      fechaFinal = moment.tz('America/Lima')
-        .hour(12)
-        .minute(0)
-        .second(0)
-        .millisecond(0)
-        .toDate();
+      // Si no hay fecha, usamos la fecha actual en UTC
+      fechaFinal = obtenerFechaActual();  // Usamos la fecha actual en UTC
     }
 
     console.log('Fecha original recibida:', fechaPago);
-    console.log('Fecha ajustada a zona horaria:', fechaFinal);
+    console.log('Fecha ajustada a zona horaria (UTC):', fechaFinal);
 
     // Crear nuevo cobro con la fecha ajustada
     const nuevoCobro = new Cobro({
@@ -217,11 +204,11 @@ router.post('/', authenticate, async (req, res) => {
     const cobroPopulated = await Cobro.findById(nuevoCobro._id)
       .populate('colaboradorId');
 
-    // Formatear la fecha en la respuesta
+    // Formatear la fecha en la respuesta para mostrarla en la zona horaria local
     const cobroResponse = cobroPopulated.toObject();
     cobroResponse.fechaPago = moment(cobroResponse.fechaPago)
-      .tz('America/Lima')
-      .format('YYYY-MM-DD');
+      .tz('America/Lima')  // Convertimos la fecha a la zona horaria de Lima para mostrarla
+      .format('YYYY-MM-DD');  // Solo mostramos la fecha, sin la hora
 
     res.status(201).json(cobroResponse);
   } catch (error) {
@@ -232,6 +219,7 @@ router.post('/', authenticate, async (req, res) => {
     });
   }
 });
+
 
 // Actualizar un cobro (por ejemplo, para marcarlo como "total")
 router.put('/:id', authenticate, async (req, res) => {

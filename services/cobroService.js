@@ -1,5 +1,7 @@
 const Cobro = require('../models/Cobro');
 const Colaborador = require('../models/Colaborador'); // Asegúrate de que exista y esté exportado correctamente
+const { convertirFechaALocalUtc, obtenerFechaActual } = require('../utils/fechaHoraUtils');
+
 
 // Obtener todos los cobros para un usuario
 const getCobros = async (userId) => {
@@ -19,24 +21,43 @@ const getCobros = async (userId) => {
 // Crear un nuevo cobro
 const createCobro = async (userId, cobroData) => {
   try {
-    if (!userId || !cobroData.colaboradorId || !cobroData.montoPagado || !cobroData.estadoPago || !cobroData.yape || !cobroData.efectivo || !cobroData.gastosImprevistos) {
-      throw new Error('Faltan campos requeridos');
+    // Verificar si faltan campos obligatorios
+    const requiredFields = ['colaboradorId', 'montoPagado', 'estadoPago', 'yape', 'efectivo', 'gastosImprevistos'];
+    for (const field of requiredFields) {
+      if (!cobroData[field]) {
+        throw new Error(`Falta el campo requerido: ${field}`);
+      }
     }
 
-    // Añadir el userId al cobro para asociarlo al usuario autenticado
+    const { fechaPago } = cobroData;
+    let fechaFinal;
+
+    // Si la fechaPago es válida, procesamos la fecha
+    if (fechaPago) {
+      // Usamos la función para convertir la fecha a UTC antes de guardarla
+      fechaFinal = convertirFechaALocalUtc(fechaPago);  // Usar la función de conversión
+    } else {
+      // Si no hay fecha, usamos la fecha y hora actual en UTC
+      fechaFinal = obtenerFechaActual();  // Esta función retorna la fecha actual en UTC
+    }
+
+    // Crear el objeto de cobro
     const newCobro = new Cobro({
       ...cobroData,
       userId,
       yape: cobroData.yape, // Incluir Yape
       efectivo: cobroData.efectivo, // Incluir Efectivo
-      gastosImprevistos: cobroData.gastosImprevistos
+      gastosImprevistos: cobroData.gastosImprevistos,
+      fechaPago: fechaFinal,  // Guardar la fecha con la hora asignada
     });
 
+    // Guardar el nuevo cobro en la base de datos
     await newCobro.save();
+
     return newCobro;
   } catch (error) {
     console.error('Error al crear cobro:', error);
-    throw error;
+    throw error;  // Lanza el error para que se maneje adecuadamente en el controlador
   }
 };
 
