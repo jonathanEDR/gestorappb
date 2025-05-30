@@ -18,6 +18,19 @@ const colaboradorSchema = new mongoose.Schema({
     type: String,
     required: false
   },
+
+  departamento: {
+    type: String,
+    enum: ['Producción', 'Ventas', 'Administración', 'Financiero'],
+    required: true
+  },
+  sueldo: {
+    type: Number,
+    required: true,
+    default: 0,
+    min: 0
+  },
+
   fechaRegistro: {
     type: Date,
     default: Date.now
@@ -27,4 +40,4 @@ const colaboradorSchema = new mongoose.Schema({
   timestamps: true, // Esto agrega createdAt y updatedAt automáticamente
   });
 
-module.exports = mongoose.model('Colaborador', colaboradorSchema);
+module.exports = mongoose.models.Colaborador || mongoose.model('Colaborador', colaboradorSchema);

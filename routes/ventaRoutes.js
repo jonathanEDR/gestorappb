@@ -250,7 +250,7 @@ router.get('/devoluciones', authenticate, async (req, res) => {
 });
 
 router.post('/devoluciones', authenticate, async (req, res) => {
-  const { ventaId, productoId, cantidadDevuelta, montoDevolucion, motivo } = req.body;
+  const { ventaId, productoId, cantidadDevuelta, montoDevolucion, motivo, fechaDevolucion } = req.body;
   const userId = req.user.id;
 
   try {
@@ -278,7 +278,8 @@ router.post('/devoluciones', authenticate, async (req, res) => {
       productoId,
       cantidadDevuelta,
       montoDevolucion,
-      motivo
+      motivo,
+      fechaDevolucion: fechaDevolucion ? new Date(fechaDevolucion) : new Date() // Usar fecha proporcionada o actual
     });
 
     await devolucion.save();
@@ -320,47 +321,70 @@ router.delete('/devoluciones/:id', authenticate, async (req, res) => {
   const userId = req.user.id;
 
   try {
-    // Buscar la devolución
-    const devolucion = await Devolucion.findOne({ _id: id, userId });
+    // Buscar la devolución y validar que existe
+    const devolucion = await Devolucion.findOne({ _id: id, userId })
+      .populate('productoId')
+      .populate('ventaId');
+
     if (!devolucion) {
       return res.status(404).json({ message: 'Devolución no encontrada' });
     }
 
-    // Obtener el producto para calcular el monto a restaurar
-    const producto = await Producto.findById(devolucion.productoId);
-    if (!producto) {
-      return res.status(404).json({ message: 'Producto no encontrado' });
+    // Validar que el producto existe
+    if (!devolucion.productoId) {
+      return res.status(404).json({ message: 'Producto asociado no encontrado' });
     }
 
-    // Calcular el monto a restaurar
-    const montoARestaurar = producto.precio * devolucion.cantidadDevuelta;
+    // Validar que la venta existe
+    if (!devolucion.ventaId) {
+      return res.status(404).json({ message: 'Venta asociada no encontrada' });
+    }
 
-    // Revertir los cambios en el stock del producto
-    await Producto.findByIdAndUpdate(devolucion.productoId, {
-      $inc: { 
-        cantidadVendida: devolucion.cantidadDevuelta,
-        cantidadRestante: -devolucion.cantidadDevuelta
-      }
-    });
+    // 1. Revertir cambios en el producto
+    await Producto.findByIdAndUpdate(
+      devolucion.productoId._id,
+      {
+        $inc: {
+          cantidadVendida: devolucion.cantidadDevuelta, // Aumentar la cantidad vendida
+          cantidadRestante: -devolucion.cantidadDevuelta // Disminuir la cantidad restante
+        }
+      },
+      { new: true }
+    );
 
-    // Actualizar la venta
-    await Venta.findByIdAndUpdate(devolucion.ventaId, {
-      $inc: { 
-        cantidadDevuelta: -devolucion.cantidadDevuelta,
-        montoTotal: montoARestaurar
-      }
-    });
+    // 2. Revertir cambios en la venta
+    await Venta.findByIdAndUpdate(
+      devolucion.ventaId._id,
+      {
+        $inc: {
+          cantidadDevuelta: -devolucion.cantidadDevuelta, // Disminuir la cantidad devuelta
+          montoTotal: devolucion.montoDevolucion, // Restaurar el monto original
+          cantidad: devolucion.cantidadDevuelta // Restaurar la cantidad original
+        }
+      },
+      { new: true }
+    );
 
-    // Eliminar la devolución
+    // 3. Eliminar la devolución
     await Devolucion.findByIdAndDelete(id);
 
-    res.json({ message: 'Devolución eliminada correctamente' });
+    res.json({ 
+      message: 'Devolución eliminada correctamente',
+      devolucion: {
+        id: devolucion._id,
+        cantidadDevuelta: devolucion.cantidadDevuelta,
+        montoDevolucion: devolucion.montoDevolucion
+      }
+    });
+
   } catch (error) {
     console.error('Error al eliminar la devolución:', error);
-    res.status(500).json({ message: 'Error al eliminar la devolución' });
+    res.status(500).json({ 
+      message: 'Error al eliminar la devolución',
+      error: error.message 
+    });
   }
 });
-
 
 // Ruta para obtener ventas filtradas por rango de fechas
 router.get('/ventas-filtradas', authenticate, async (req, res) => {

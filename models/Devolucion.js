@@ -15,6 +15,14 @@ const devolucionSchema = new mongoose.Schema({
     ref: 'Producto',
     required: true
   },
+  fechaDevolucion: {
+    type: Date,
+    default: Date.now,
+    required: true
+  },
+
+
+
   cantidadDevuelta: {
     type: Number,
     required: true,

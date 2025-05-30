@@ -27,23 +27,25 @@ router.get('/', authenticate, async (req, res) => {
 
 // Agregar un nuevo colaborador
 router.post('/', authenticate, async (req, res) => {
-  const { nombre, telefono, email } = req.body;
+  const { nombre, telefono, email, departamento, sueldo } = req.body;
   const userId = req.user.id;  // Obtener el userId del usuario autenticado
 
-  if (!nombre || !email) {
+  if (!nombre || !email || !departamento || sueldo == null) {
     return res.status(400).json({ 
-      message: 'El nombre y email son obligatorios' 
+      message: 'Nombre, email, departamento y sueldo son obligatorios' 
     });
   }
 
   try {
-    // Crear un nuevo colaborador y asociarlo al userId
     const nuevoColaborador = await createColaborador({
-      userId,  // Asociamos el colaborador al userId del usuario autenticado
+      userId,
       nombre,
       telefono,
-      email
+      email,
+      departamento,
+      sueldo: parseFloat(sueldo) || 0 // Asegurarse de que sueldo sea un número
     });
+
     res.status(201).json({
       message: 'Colaborador creado exitosamente',
       colaborador: nuevoColaborador
@@ -60,12 +62,12 @@ router.post('/', authenticate, async (req, res) => {
 // Actualizar un colaborador
 router.put('/:id', authenticate, async (req, res) => {
   const { id } = req.params;
-  const { nombre, telefono, email } = req.body;
+  const { nombre, telefono, email, departamento, sueldo } = req.body;
   const userId = req.user.id;  // Obtener el userId del usuario autenticado
 
   try {
     // Filtrar por userId para asegurarse de que el colaborador pertenece al usuario autenticado
-    const updatedColaborador = await updateColaborador(id, { nombre, telefono, email }, userId);
+    const updatedColaborador = await updateColaborador(id, { nombre, telefono, email, departamento, sueldo }, userId);
     if (!updatedColaborador) {
       return res.status(404).json({ message: 'Colaborador no encontrado o no autorizado' });
     }

@@ -26,13 +26,29 @@ const getColaboradores = async (userId) => {
  * @returns {Promise<Object>} - Colaborador creado
  */
 const createColaborador = async (colaboradorData) => {
-  if (!colaboradorData.userId) {
-    throw new Error('userId es requerido para crear un colaborador');
+  const { userId, nombre, telefono, email, departamento, sueldo } = colaboradorData;
+
+  if (!userId || !nombre || !email || !departamento || !sueldo) {
+    throw new Error('Faltan campos requeridos');
   }
-  
+
+  // Validar departamento
+  const departamentosValidos = ['Producción', 'Ventas', 'Administración', 'Financiero'];
+  if (!departamentosValidos.includes(departamento)) {
+    throw new Error(`Departamento inválido. Debe ser uno de: ${departamentosValidos.join(', ')}`);
+  }
+
   try {
-    const nuevoColaborador = new Colaborador(colaboradorData);
-    return await nuevoColaborador.save();
+    const nuevoColaborador = await Colaborador.create({
+      userId,
+      nombre,
+      telefono,
+      email,
+      departamento,
+      sueldo: parseFloat(sueldo) || 0 // Convertir a número y usar 0 como fallback
+    });
+
+    return nuevoColaborador;
   } catch (error) {
     console.error('Error en createColaborador:', error);
     throw new Error(`Error al crear colaborador: ${error.message}`);
