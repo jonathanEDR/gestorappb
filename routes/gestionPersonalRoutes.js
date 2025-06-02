@@ -50,7 +50,7 @@ router.get('/colaboradores', authenticate, async (req, res) => {
  */
 router.post('/', authenticate, async (req, res) => {
   try {
-         const userId = req.user.id; // ID de Clerk del usuario autenticado
+    const userId = req.user.id;
     const registroData = {
       ...req.body,
       userId
@@ -60,37 +60,71 @@ router.post('/', authenticate, async (req, res) => {
       colaboradorId, 
       fechaDeGestion, 
       descripcion, 
-      monto, 
+      monto = 0,        // Valor por defecto 0
       faltante = 0, 
       adelanto = 0, 
       pagodiario = 0,
+      diasLaborados = 1 // Agregamos días laborados
     } = registroData;
 
-    if (!colaboradorId || !fechaDeGestion || !descripcion || monto == null) {
-      return res.status(400).json({
-        message: 'Faltan campos requeridos: colaboradorId, fechaDeGestion, descripcion, monto'
-      });
+    // Validaciones mejoradas
+    if (!colaboradorId) {
+      return res.status(400).json({ message: 'ID de colaborador es requerido' });
     }
 
-    // Validar que el colaboradorId sea un ObjectId válido
+    if (!fechaDeGestion) {
+      return res.status(400).json({ message: 'Fecha de gestión es requerida' });
+    }
+
+    if (!descripcion || descripcion.trim() === '') {
+      return res.status(400).json({ message: 'Descripción es requerida' });
+    }
+
+    // Validar que los valores numéricos sean válidos (incluyendo 0)
+    const numericos = { monto, faltante, adelanto, pagodiario, diasLaborados };
+    for (const [campo, valor] of Object.entries(numericos)) {
+      if (typeof valor !== 'number' || isNaN(valor) || valor < 0) {
+        return res.status(400).json({ 
+          message: `El campo ${campo} debe ser un número válido mayor o igual a 0` 
+        });
+      }
+    }
+
+    // Validar ObjectId
     if (!colaboradorId.match(/^[0-9a-fA-F]{24}$/)) {
       return res.status(400).json({ message: 'ID de colaborador no válido' });
     }
 
-    // Verificar que el colaborador existe
-    const colaborador = await Colaborador.findById(colaboradorId);
+    // Verificar colaborador
+    const colaborador = await Colaborador.findOne({ 
+      _id: colaboradorId,
+      userId // Aseguramos que el colaborador pertenece al usuario
+    });
+
     if (!colaborador) {
       return res.status(404).json({ message: 'Colaborador no encontrado' });
     }
 
-const fechaDeGestionUtc = convertirFechaALocalUtc(fechaDeGestion);
+    // Convertir fecha
+    const fechaDeGestionUtc = convertirFechaALocalUtc(fechaDeGestion);
 
+    // Preparar datos normalizados
+    const datosNormalizados = {
+      ...registroData,
+      fechaDeGestion: fechaDeGestionUtc,
+      monto: parseFloat(monto) || 0,
+      faltante: parseFloat(faltante) || 0,
+      adelanto: parseFloat(adelanto) || 0,
+      pagodiario: parseFloat(pagodiario) || 0,
+      diasLaborados: parseInt(diasLaborados) || 1
+    };
 
-    // Crear el registro usando el servicio
-      const nuevoRegistro = await gestionService.crearRegistro(registroData);
+    // Crear registro
+    const nuevoRegistro = await gestionService.crearRegistro(datosNormalizados);
 
-
+    // Responder con el registro creado
     res.status(201).json(nuevoRegistro);
+
   } catch (error) {
     console.error('Error al crear registro:', error);
     res.status(500).json({
