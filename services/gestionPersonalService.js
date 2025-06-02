@@ -1,5 +1,6 @@
 const GestionPersonal = require('../models/GestionPersonal');
 const Colaborador = require('../models/Colaborador'); // Si necesitas validar o usar el colaborador
+const { convertirFechaALocalUtc, obtenerFechaActual } = require('../utils/fechaHoraUtils');
 
 // Función auxiliar para validar y parsear números
 const parsearNumero = (valor, defecto = 0) => {
@@ -9,37 +10,48 @@ const parsearNumero = (valor, defecto = 0) => {
 
 // Crear nuevo registro
 const crearRegistro = async (data) => {
-  const { 
+  const {
+    userId, // ID del usuario autenticado
     colaboradorId,
     fechaDeGestion,
     descripcion,
     monto,
     faltante = 0,
     adelanto = 0,
-    diasLaborados = 30 
+    pagodiario = 0,
   } = data;
 
+    if (!userId) {
+    throw new Error('userId es requerido');
+  }
+
+
   // Buscar al colaborador
-  const colaborador = await Colaborador.findById(colaboradorId);
+  const colaborador = await Colaborador.findOne({
+    _id: colaboradorId,
+    userId: userId
+  });
+
+
   if (!colaborador) {
     throw new Error('Colaborador no encontrado');
   }
 
-  // Obtener el último registro de gestión personal del colaborador
-  const ultimoRegistro = await GestionPersonal.findOne({ colaboradorId }).sort({ fechaDeGestion: -1 });
+ 
 
-  // Si existe un registro anterior, sumamos 1 al total de días laborados
-  const nuevoDiaLaborado = ultimoRegistro ? ultimoRegistro.diasLaborados + 1 : 1;
+  const fechaDeGestionUtc = convertirFechaALocalUtc(fechaDeGestion);
 
   // Crear el nuevo registro de gestión personal
   const nuevoRegistro = new GestionPersonal({
+    userId, // ID del usuario autenticado
     colaboradorId,
-    fechaDeGestion: new Date(fechaDeGestion),
+    fechaDeGestion: fechaDeGestionUtc,
     descripcion: descripcion.trim(),
     monto: parsearNumero(monto),
     faltante: parsearNumero(faltante),
     adelanto: parsearNumero(adelanto),
-    diasLaborados: nuevoDiaLaborado // Usamos el valor incrementado de días laborados
+    diasLaborados: 1,
+    pagodiario: parsearNumero(pagodiario, 0),
   });
 
   await nuevoRegistro.save();
@@ -63,6 +75,7 @@ const addGasto = async (colaboradorId, tipo, gastoData) => {
       faltante: 0,
       adelanto: 0,
       diasLaborados: 1,
+      pagodiario: 0,
     });
   }
 
@@ -78,6 +91,11 @@ const addGasto = async (colaboradorId, tipo, gastoData) => {
     case 'adelantos':
       gestion.adelanto += parsearNumero(gastoData.monto);
       break;
+    case 'pagosDiarios':
+      gestion.pagodiario += parsearNumero(gastoData.monto);
+      break;
+
+
     default:
       throw new Error('Tipo de gasto no válido');
   }

@@ -1,7 +1,13 @@
 const mongoose = require('mongoose');
 
 const gestionPersonalSchema = new mongoose.Schema({
-  colaboradorId: { 
+
+    userId: {
+    type: String,  // Asociar al ID del usuario autenticado
+    required: true,
+  },
+  
+  colaboradorId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Colaborador',
     required: true
@@ -36,17 +42,24 @@ const gestionPersonalSchema = new mongoose.Schema({
     default: 0
   },
 
+pagodiario: {
+    type: Number,
+    required: true,
+    default: 0
+  },
+
   diasLaborados: {
     type: Number,
     required: true,
     default: 30
   },
   
+
+
 }, {
   timestamps: true
 });
 
+gestionPersonalSchema.index({ fechaDeGestion: -1 });
 
-
-const GestionPersonal = mongoose.model('GestionPersonal', gestionPersonalSchema);
-module.exports = GestionPersonal;
+module.exports = mongoose.model('GestionPersonal', gestionPersonalSchema);
