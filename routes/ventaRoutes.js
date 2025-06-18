@@ -46,8 +46,7 @@ router.get('/productos', authenticate, async (req, res) => {
 // ===== FUNCIONES DE SERVICIO =====
 
 // Función para obtener ventas con datos del colaborador y producto
-async function getVentasService(userId) {
-  return await Venta.find({ userId })
+async function getVentasService(userId) {  return await Venta.find({ userId })
     .populate('colaboradorId')
     .populate({
       path: 'detalles',
@@ -56,7 +55,7 @@ async function getVentasService(userId) {
         select: 'nombre precio cantidadRestante'
       }
     })
-    .sort({ fechadeVenta: -1 })
+    .sort({ fechaVenta: -1 })
     .populate('colaboradorId', 'nombre')
     .populate('productoId', 'nombre precio');
 }
@@ -170,18 +169,17 @@ router.get('/', authenticate, async (req, res) => {
 
 // Ruta para crear una nueva venta
 router.post('/', authenticate, async (req, res) => {
-  try {
-    const { 
+  try {    const { 
       colaboradorId, 
       detalles,
       total,
       estadoPago, 
       cantidadPagada,
-      fechadeVenta 
+      fechaVenta 
     } = req.body;
     
     const userId = req.user.id;
-    console.log('Datos recibidos:', { colaboradorId, detalles, total, estadoPago, cantidadPagada, fechadeVenta });
+    console.log('Datos recibidos:', { colaboradorId, detalles, total, estadoPago, cantidadPagada, fechaVenta });
 
     // Validar datos requeridos
     if (!colaboradorId || !detalles || !Array.isArray(detalles) || detalles.length === 0) {
@@ -213,14 +211,13 @@ router.post('/', authenticate, async (req, res) => {
 
     try {
       // 1. Crear la venta principal
-      const nuevaVenta = new Venta({
-        userId,
+      const nuevaVenta = new Venta({        userId,
         colaboradorId,
         subtotal: total, // Usar el total como subtotal ya que no hay IGV
         montoTotal: total,
         estadoPago: estadoPago || 'Pendiente',
         cantidadPagada: cantidadPagada || 0,
-        fechadeVenta: fechadeVenta ? convertirFechaALocalUtc(fechadeVenta) : obtenerFechaActual(),
+        fechaVenta: fechaVenta ? convertirFechaALocalUtc(fechaVenta) : obtenerFechaActual(),
         detalles: [] // Se llenarán después
       });
 
@@ -329,10 +326,9 @@ router.get('/devoluciones', authenticate, async (req, res) => {
   
   try {
     const skip = (parseInt(page) - 1) * parseInt(limit);
-      const devoluciones = await Devolucion.find({ userId })
-      .populate({
+      const devoluciones = await Devolucion.find({ userId })      .populate({
         path: 'ventaId',
-        select: 'fechaVenta fechadeVenta montoTotal estadoPago', // Incluir explícitamente los campos de fecha
+        select: 'fechaVenta montoTotal estadoPago', // Solo incluir fechaVenta
         populate: { 
           path: 'colaboradorId',
           model: 'Colaborador',
@@ -350,11 +346,9 @@ router.get('/devoluciones', authenticate, async (req, res) => {
     
     // Debug adicional - verificar estructura de ventas
     devoluciones.forEach((dev, index) => {
-      console.log(`🔍 Devolución ${index + 1}:`, {
-        id: dev._id,
+      console.log(`🔍 Devolución ${index + 1}:`, {        id: dev._id,
         ventaId: dev.ventaId?._id,
         fechaVenta: dev.ventaId?.fechaVenta,
-        fechadeVenta: dev.ventaId?.fechadeVenta,
         colaborador: dev.ventaId?.colaboradorId?.nombre,
         producto: dev.productoId?.nombre
       });
@@ -375,68 +369,129 @@ router.get('/devoluciones', authenticate, async (req, res) => {
 });
 
 router.post('/devoluciones', authenticate, async (req, res) => {
-  const { ventaId, productoId, cantidadDevuelta, montoDevolucion, motivo, fechaDevolucion } = req.body;
+  const { ventaId, fechaDevolucion, items } = req.body;
   const userId = req.user.id;
 
   try {
-    // Validar que exista la venta y el producto
-    const venta = await Venta.findOne({ _id: ventaId, userId });
-    const producto = await Producto.findById(productoId);
+    console.log('Datos de devolución recibidos:', { ventaId, fechaDevolucion, items });
 
-    if (!venta || !producto) {
-      return res.status(404).json({ 
-        message: !venta ? 'Venta no encontrada' : 'Producto no encontrado' 
-      });
+    // Validar que exista la venta
+    const venta = await Venta.findOne({ _id: ventaId, userId })
+      .populate('detalles');
+
+    if (!venta) {
+      return res.status(404).json({ message: 'Venta no encontrada' });
     }
 
-    // Validar que la cantidad a devolver no sea mayor que la cantidad vendida
-    const cantidadDevueltaPrevia = venta.cantidadDevuelta || 0;
-    if (cantidadDevuelta > (venta.cantidad - cantidadDevueltaPrevia)) {
-      return res.status(400).json({ 
-        message: 'La cantidad a devolver no puede ser mayor que la cantidad vendida disponible' 
-      });
+    console.log('Venta encontrada:', venta);
+
+    // Validar que se proporcionaron items
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Se requiere al menos un producto para devolver' });
     }
 
-    const devolucion = new Devolucion({
-      userId,
-      ventaId,
-      productoId,
-      cantidadDevuelta,
-      montoDevolucion,
-      motivo,
-      fechaDevolucion: fechaDevolucion ? new Date(fechaDevolucion) : new Date() // Usar fecha proporcionada o actual
-    });
+    // Procesar fecha de devolución
+    const fechaFinal = fechaDevolucion ? 
+      convertirFechaALocalUtc(fechaDevolucion) : 
+      obtenerFechaActual();
 
-    await devolucion.save();
-    
-    // Actualizar el stock del producto
-    await Producto.findByIdAndUpdate(productoId, {
-      $inc: { 
-        cantidadVendida: -cantidadDevuelta,
-        cantidadRestante: cantidadDevuelta
+    // Array para almacenar las devoluciones creadas
+    const devolucionesCreadas = [];
+
+    // Procesar cada item de devolución
+    for (const item of items) {
+      const { productoId, cantidadDevuelta, montoDevolucion, motivo } = item;
+
+      console.log('Procesando item:', item);
+
+      // Validar que el producto existe
+      const producto = await Producto.findById(productoId);
+      if (!producto) {
+        throw new Error(`Producto con ID ${productoId} no encontrado`);
       }
-    });
 
-    // Calcular el nuevo montoTotal y actualizar la cantidad de la venta
-    const montoAReducir = producto.precio * cantidadDevuelta;
+      // Buscar el detalle de venta correspondiente
+      const detalleVenta = venta.detalles.find(d => 
+        d.productoId.toString() === productoId.toString()
+      );
 
-    // Actualizar la venta con todos los cambios necesarios
-    await Venta.findByIdAndUpdate(ventaId, {
-      $inc: { 
-        cantidadDevuelta: cantidadDevuelta,
-        montoTotal: -montoAReducir,
-        cantidad: -cantidadDevuelta  // Reducir la cantidad original de la venta
+      if (!detalleVenta) {
+        throw new Error(`El producto ${producto.nombre} no está en esta venta`);
       }
+
+      // Calcular cantidad ya devuelta para este producto en esta venta
+      const devolucionesExistentes = await Devolucion.find({ 
+        ventaId: ventaId, 
+        productoId: productoId 
+      });
+      
+      const cantidadYaDevuelta = devolucionesExistentes.reduce(
+        (total, dev) => total + dev.cantidadDevuelta, 0
+      );
+
+      const cantidadDisponible = detalleVenta.cantidad - cantidadYaDevuelta;
+
+      // Validar cantidad a devolver
+      if (cantidadDevuelta > cantidadDisponible) {
+        throw new Error(
+          `No se puede devolver ${cantidadDevuelta} unidades de ${producto.nombre}. ` +
+          `Cantidad disponible: ${cantidadDisponible}`
+        );
+      }
+
+      // Crear la devolución
+      const devolucion = new Devolucion({
+        userId,
+        ventaId,
+        productoId,
+        cantidadDevuelta,
+        montoDevolucion,
+        motivo,
+        fechaDevolucion: fechaFinal
+      });
+
+      await devolucion.save();
+      devolucionesCreadas.push(devolucion);
+
+      // Actualizar el stock del producto
+      await Producto.findByIdAndUpdate(productoId, {
+        $inc: { 
+          cantidadVendida: -cantidadDevuelta,
+          cantidadRestante: cantidadDevuelta
+        }
+      });
+
+      // Actualizar la venta - reducir el monto total
+      await Venta.findByIdAndUpdate(ventaId, {
+        $inc: { 
+          cantidadDevuelta: cantidadDevuelta,
+          montoTotal: -montoDevolucion
+        }
+      });
+
+      console.log(`Devolución creada para ${producto.nombre}: ${cantidadDevuelta} unidades`);
+    }
+
+    // Poblar las devoluciones creadas con los datos necesarios
+    const devolucionesRespuesta = await Promise.all(
+      devolucionesCreadas.map(async (dev) => {
+        return await Devolucion.findById(dev._id)
+          .populate('productoId', 'nombre precio')
+          .populate('ventaId');
+      })
+    );
+
+    res.status(201).json({
+      message: 'Devoluciones procesadas exitosamente',
+      devoluciones: devolucionesRespuesta
     });
 
-    const devolucionPopulada = await Devolucion.findById(devolucion._id)
-      .populate('productoId', 'nombre precio')
-      .populate('ventaId');
-
-    res.status(201).json(devolucionPopulada);
   } catch (error) {
     console.error('Error al crear devolución:', error);
-    res.status(500).json({ message: 'Error al crear devolución', error: error.message });
+    res.status(500).json({ 
+      message: 'Error al crear devolución', 
+      error: error.message 
+    });
   }
 });
 

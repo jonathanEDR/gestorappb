@@ -34,12 +34,11 @@ const ventaSchema = new mongoose.Schema({
     type: String,
     enum: ["Pendiente", "Pagado", "Parcial"],
     required: true,
-  },
-  cantidadPagada: { type: Number, default: 0 },
+  },  cantidadPagada: { type: Number, default: 0 },
   debe: { type: Number, default: function() { return this.montoTotal - this.cantidadPagada; } }, // Calcular la deuda pendiente
   fechaVenta: {
     type: Date,
-    default: Date.now,  // Establecer fecha por defecto
+    // Quitar el default Date.now para permitir fechas personalizadas
   },
 
   cantidadDevuelta: {

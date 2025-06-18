@@ -24,14 +24,13 @@ async function getVentas(userId) {
 
 async function createVenta(ventaData) {
   console.log('Datos recibidos de la venta:', ventaData); // Debug
-
   const { 
     colaboradorId,
     detalles,
     estadoPago, 
     cantidadPagada, 
     userId, 
-    fechadeVenta,
+    fechaVenta,
     total
   } = ventaData;
 
@@ -65,9 +64,8 @@ async function createVenta(ventaData) {
   const subtotal = detalles.reduce((acc, detalle) => {
     return acc + (detalle.cantidad * detalle.precioUnitario);
   }, 0);
-
   // Fecha de venta
-  const fechaFinal = fechadeVenta ? convertirFechaALocalUtc(fechadeVenta) : obtenerFechaActual();
+  const fechaFinal = fechaVenta ? convertirFechaALocalUtc(fechaVenta) : obtenerFechaActual();
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -77,11 +75,10 @@ async function createVenta(ventaData) {
     const nuevaVenta = new Venta({
       colaboradorId,
       subtotal,
-      montoTotal: total || subtotal,
-      estadoPago: estadoPago || 'Pendiente',
+      montoTotal: total || subtotal,      estadoPago: estadoPago || 'Pendiente',
       cantidadPagada: cantidadPagada || 0,
       userId,
-      fechadeVenta: fechaFinal,
+      fechaVenta: fechaFinal,
       detalles: [] // Inicialmente vacío
     });
 
@@ -156,8 +153,7 @@ async function createVenta(ventaData) {
 async function updateVenta(id, datosActualizados, userId) {
   const venta = await Venta.findOne({ _id: id, userId });
   if (!venta) return null;
-
-  const { cantidad, estadoPago, cantidadPagada, fechadeVenta } = datosActualizados;
+  const { cantidad, estadoPago, cantidadPagada, fechaVenta } = datosActualizados;
 
   // Verificar si tiene devoluciones antes de actualizar cualquier dato
   const tieneDevoluciones = await Devolucion.findOne({ ventaId: id });
@@ -165,10 +161,10 @@ async function updateVenta(id, datosActualizados, userId) {
     throw new Error('No se puede editar una venta que tiene devoluciones asociadas');
   }
 
-  // Actualizar fechadeVenta si viene
-  if (fechadeVenta) {
-    venta.fechadeVenta = convertirFechaALocalUtc(fechadeVenta);
-    venta.markModified('fechadeVenta');
+  // Actualizar fechaVenta si viene
+  if (fechaVenta) {
+    venta.fechaVenta = convertirFechaALocalUtc(fechaVenta);
+    venta.markModified('fechaVenta');
   }
 
   // Buscar el producto relacionado
@@ -394,13 +390,12 @@ async function registrarDevolucion(ventaId, productoId, cantidadDevuelta, motivo
 // Agregar nueva función para obtener datos del gráfico
 async function getChartData(userId, range) {
   const startDate = getStartDate(range);
-  
-  const [ventas, devoluciones] = await Promise.all([
+    const [ventas, devoluciones] = await Promise.all([
     Venta.find({
       userId,
-      fechadeVenta: { $gte: startDate }
+      fechaVenta: { $gte: startDate }
     })
-    .sort({ fechadeVenta: 1 })
+    .sort({ fechaVenta: 1 })
     .populate('colaboradorId', 'nombre')
     .populate('productoId', 'nombre precio'),
     
@@ -421,10 +416,9 @@ async function getChartData(userId, range) {
 // Modificar la función getVentas para soportar paginación
 async function getVentas(userId, page = 1, limit = 10) {
   const skip = (page - 1) * limit;
-  
-  const [ventas, total] = await Promise.all([
+    const [ventas, total] = await Promise.all([
     Venta.find({ userId })
-      .sort({ fechadeVenta: -1 })
+      .sort({ fechaVenta: -1 })
       .skip(skip)
       .limit(limit)
       .populate('colaboradorId', 'nombre')
@@ -441,10 +435,9 @@ async function getVentas(userId, page = 1, limit = 10) {
   };
 }
 
-async function getAllVentas(userId) {
-  try {
+async function getAllVentas(userId) {  try {
     return await Venta.find({ userId })
-      .sort({ fechadeVenta: -1 })
+      .sort({ fechaVenta: -1 })
       .populate('colaboradorId', 'nombre')
       .populate('productoId', 'nombre precio');
   } catch (error) {
