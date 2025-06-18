@@ -5,18 +5,24 @@ const cobroSchema = new mongoose.Schema({
     type: String,  // Asociar al ID del usuario autenticado
     required: true,
   },
-  
-  colaboradorId: {
+    colaboradorId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Colaborador',
     required: [true, 'El colaborador es requerido']
   },
 
+  // Venta específica a la que se aplica este cobro
+  ventaId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Venta',
+    required: [true, 'La venta es requerida']
+  },
+
+  // Mantener el array para compatibilidad (opcional)
   ventasId: [{
-  type: mongoose.Schema.Types.ObjectId,
-  ref: 'Venta',
-  required: true
-}],
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Venta'
+  }],
 
   montoPagado: {
     type: Number,

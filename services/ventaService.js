@@ -1,6 +1,8 @@
+const mongoose = require('mongoose');
 const Venta = require('../models/Venta');
 const Producto = require('../models/Producto');
 const Devolucion = require('../models/Devolucion');
+const DetalleVenta = require('../models/DetalleVenta');
 const { convertirFechaALocalUtc, obtenerFechaActual } = require('../utils/fechaHoraUtils');
 
 /**
@@ -21,73 +23,127 @@ async function getVentas(userId) {
  */
 
 async function createVenta(ventaData) {
+  console.log('Datos recibidos de la venta:', ventaData); // Debug
+
   const { 
-    colaboradorId, 
-    productoId, 
-    cantidad, 
-    montoTotal, 
+    colaboradorId,
+    detalles,
     estadoPago, 
     cantidadPagada, 
     userId, 
-    fechadeVenta 
+    fechadeVenta,
+    total
   } = ventaData;
 
-  
-  // Manejar la fecha de forma consistente
-  let fechaFinal;
-  if (fechadeVenta) {
-    fechaFinal = convertirFechaALocalUtc(fechadeVenta);
-  } else {
-    fechaFinal = obtenerFechaActual();
+  // Validación de datos
+  if (!colaboradorId) {
+    throw new Error('El colaboradorId es requerido');
   }
 
-  // CREAR LA VENTA CON FECHA/HORA ACTUAL
-  const nuevaVenta = new Venta({
-    colaboradorId,
-    productoId,
-    cantidad,
-    montoTotal,
-    estadoPago,
-    cantidadPagada,
-    userId,
-    fechadeVenta: fechaFinal
-  });
+  if (!detalles || !Array.isArray(detalles) || detalles.length === 0) {
+    throw new Error('Se requieren detalles de la venta y deben ser un array no vacío');
+  }
 
-  console.log('7. Objeto venta antes de guardar:', {
-    fechadeVenta: nuevaVenta.fechadeVenta,
-    fechaISO: nuevaVenta.fechadeVenta.toISOString()
-  });
+  // Validar y procesar cada detalle antes de crear la venta
+  for (const detalle of detalles) {
+    console.log('Validando detalle:', detalle); // Debug
+    if (!detalle.productoId || !detalle.cantidad || !detalle.precioUnitario) {
+      throw new Error(`Detalle inválido: ${JSON.stringify(detalle)}`);
+    }
 
-  // GUARDAR EN LA BASE DE DATOS
-  const ventaGuardada = await nuevaVenta.save();
-  
-  console.log('8. Venta guardada en DB:', {
-    id: ventaGuardada._id,
-    fechadeVenta: ventaGuardada.fechadeVenta,
-    fechaISO: ventaGuardada.fechadeVenta.toISOString(),
-    fechaString: ventaGuardada.fechadeVenta.toString()
-  });
+    // Validar existencia y stock del producto
+    const producto = await Producto.findById(detalle.productoId);
+    if (!producto) {
+      throw new Error(`Producto con ID ${detalle.productoId} no encontrado`);
+    }
+    if (producto.cantidadRestante < detalle.cantidad) {
+      throw new Error(`Stock insuficiente para el producto ${producto.nombre}`);
+    }
+  }
 
-  // Actualizar stock del producto
-  const producto = await Producto.findById(productoId);
-  producto.cantidadVendida += cantidad;
-  producto.cantidadRestante = producto.cantidad - producto.cantidadVendida;
-  await producto.save();
+  // Calcular el subtotal
+  const subtotal = detalles.reduce((acc, detalle) => {
+    return acc + (detalle.cantidad * detalle.precioUnitario);
+  }, 0);
 
-  // Retornar la venta completa
-  const ventaCompleta = await Venta.findById(nuevaVenta._id)
-    .populate('colaboradorId', 'nombre')
-    .populate('productoId', 'nombre precio');
+  // Fecha de venta
+  const fechaFinal = fechadeVenta ? convertirFechaALocalUtc(fechadeVenta) : obtenerFechaActual();
 
-  console.log('9. Venta completa retornada:', {
-    id: ventaCompleta._id,
-    fechadeVenta: ventaCompleta.fechadeVenta,
-    fechaISO: ventaCompleta.fechadeVenta.toISOString()
-  });
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  console.log('=====================');
-  
-  return ventaCompleta;
+  try {
+    // 1. Crear la venta principal
+    const nuevaVenta = new Venta({
+      colaboradorId,
+      subtotal,
+      montoTotal: total || subtotal,
+      estadoPago: estadoPago || 'Pendiente',
+      cantidadPagada: cantidadPagada || 0,
+      userId,
+      fechadeVenta: fechaFinal,
+      detalles: [] // Inicialmente vacío
+    });
+
+    // 2. Guardar la venta
+    const ventaGuardada = await nuevaVenta.save({ session });
+    console.log('Venta guardada:', ventaGuardada); // Debug
+
+    // 3. Procesar y guardar cada detalle
+    const detallesGuardados = await Promise.all(detalles.map(async (detalle) => {
+      console.log('Procesando detalle:', detalle); // Debug
+
+      // Crear el detalle
+      const nuevoDetalle = new DetalleVenta({
+        ventaId: ventaGuardada._id,
+        productoId: detalle.productoId,
+        cantidad: detalle.cantidad,
+        precioUnitario: detalle.precioUnitario,
+        subtotal: detalle.cantidad * detalle.precioUnitario
+      });
+
+      // Guardar el detalle
+      const detalleGuardado = await nuevoDetalle.save({ session });
+
+      // Actualizar el stock del producto
+      await Producto.findByIdAndUpdate(
+        detalle.productoId,
+        {
+          $inc: {
+            cantidadVendida: detalle.cantidad,
+            cantidadRestante: -detalle.cantidad
+          }
+        },
+        { session }
+      );
+
+      return detalleGuardado;
+    }));
+
+    // 4. Actualizar la venta con los detalles guardados
+    ventaGuardada.detalles = detallesGuardados.map(d => d._id);
+    await ventaGuardada.save({ session });
+
+    // 5. Confirmar la transacción
+    await session.commitTransaction();
+    
+    console.log('Venta completada con éxito:', {
+      venta: ventaGuardada,
+      detalles: detallesGuardados
+    });
+
+    // 6. Retornar la venta con sus detalles
+    return await Venta.findById(ventaGuardada._id)
+      .populate('colaboradorId', 'nombre')
+      .populate('detalles');
+
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('Error al crear la venta:', error);
+    throw error;
+  } finally {
+    session.endSession();
+  }
 }
 
 /**

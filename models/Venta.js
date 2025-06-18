@@ -11,13 +11,25 @@ const ventaSchema = new mongoose.Schema({
     ref: 'Colaborador', // Nombre del modelo de colaboradores
     required: true,
   },
-  productoId: {
+  detalles: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Producto', // Nombre del modelo de productos
+    ref: 'DetalleVenta'
+  }],
+  subtotal: { 
+    type: Number,
     required: true,
+    default: 0
   },
-  cantidad: { type: Number, required: true },
-  montoTotal: { type: Number, required: true },
+  impuesto: { 
+    type: Number,
+    required: true,
+    default: 0
+  },
+  montoTotal: { 
+    type: Number, 
+    required: true,
+    default: 0
+  },
   estadoPago: {
     type: String,
     enum: ["Pendiente", "Pagado", "Parcial"],
@@ -25,8 +37,7 @@ const ventaSchema = new mongoose.Schema({
   },
   cantidadPagada: { type: Number, default: 0 },
   debe: { type: Number, default: function() { return this.montoTotal - this.cantidadPagada; } }, // Calcular la deuda pendiente
-
-  fechadeVenta: {
+  fechaVenta: {
     type: Date,
     default: Date.now,  // Establecer fecha por defecto
   },
@@ -37,7 +48,7 @@ const ventaSchema = new mongoose.Schema({
     min: 0
   }
 
-  },
+},
   {
   timestamps: true, // Esto agrega createdAt y updatedAt automáticamente
   }

@@ -1,10 +1,12 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const router = express.Router();
 const { obtenerFechaActual, convertirFechaAFechaLocal, convertirFechaALocalUtc } = require('../utils/fechaHoraUtils');
 
 const Venta = require('../models/Venta');
 const Producto = require('../models/Producto');
 const Colaborador = require('../models/Colaborador');
+const DetalleVenta = require('../models/DetalleVenta');
 const { authenticate } = require('../middleware/authenticate');
 const Devolucion = require('../models/Devolucion'); // Importar el modelo
 
@@ -46,6 +48,15 @@ router.get('/productos', authenticate, async (req, res) => {
 // Función para obtener ventas con datos del colaborador y producto
 async function getVentasService(userId) {
   return await Venta.find({ userId })
+    .populate('colaboradorId')
+    .populate({
+      path: 'detalles',
+      populate: {
+        path: 'productoId',
+        select: 'nombre precio cantidadRestante'
+      }
+    })
+    .sort({ fechadeVenta: -1 })
     .populate('colaboradorId', 'nombre')
     .populate('productoId', 'nombre precio');
 }
@@ -71,118 +82,206 @@ async function createVentaService(ventaData) {
 
 // Función para eliminar venta
 async function deleteVentaService(id, userId) {
-  const venta = await Venta.findOne({ _id: id, userId });
-  if (!venta) return false;
+  try {
+    console.log(`Iniciando eliminación de venta ${id} para usuario ${userId}`);
+    
+    // 1. Buscar la venta con sus detalles poblados
+    const venta = await Venta.findOne({ _id: id, userId })
+      .populate('detalles');
+    
+    if (!venta) {
+      console.log(`Venta ${id} no encontrada para el usuario ${userId}`);
+      return { success: false, message: 'Venta no encontrada' };
+    }
 
-  const producto = await Producto.findById(venta.productoId);
-  if (producto) {
-    producto.cantidadVendida -= venta.cantidad;
-    producto.cantidadRestante = producto.cantidad - producto.cantidadVendida;
-    await producto.save();
+    console.log(`Venta encontrada:`, venta);
+
+    // 2. Verificar si hay devoluciones asociadas a esta venta
+    const devolucionesAsociadas = await Devolucion.find({ ventaId: id });
+    if (devolucionesAsociadas.length > 0) {
+      console.log(`Se encontraron ${devolucionesAsociadas.length} devoluciones asociadas a la venta ${id}`);
+      return { 
+        success: false, 
+        message: `No se puede eliminar la venta porque tiene ${devolucionesAsociadas.length} devoluciones asociadas. Elimine primero las devoluciones.` 
+      };
+    }
+
+    // 3. Revertir el stock de todos los productos en los detalles
+    if (venta.detalles && venta.detalles.length > 0) {
+      console.log(`Revirtiendo stock para ${venta.detalles.length} productos`);
+      
+      for (const detalle of venta.detalles) {
+        const detalleCompleto = await DetalleVenta.findById(detalle._id || detalle);
+        if (detalleCompleto) {
+          const producto = await Producto.findById(detalleCompleto.productoId);
+          if (producto) {
+            console.log(`Actualizando stock del producto ${producto.nombre}: +${detalleCompleto.cantidad}`);
+            
+            producto.cantidadVendida -= detalleCompleto.cantidad;
+            producto.cantidadRestante += detalleCompleto.cantidad;
+            
+            // Asegurar que los valores no sean negativos
+            if (producto.cantidadVendida < 0) producto.cantidadVendida = 0;
+            if (producto.cantidadRestante > producto.cantidad) producto.cantidadRestante = producto.cantidad;
+            
+            await producto.save();
+            console.log(`Stock actualizado para ${producto.nombre}: vendida=${producto.cantidadVendida}, restante=${producto.cantidadRestante}`);
+          }
+        }
+      }
+
+      // 4. Eliminar todos los detalles de venta
+      await DetalleVenta.deleteMany({ ventaId: id });
+      console.log(`Detalles de venta eliminados para la venta ${id}`);
+    }
+
+    // 5. Eliminar la venta principal
+    await Venta.findByIdAndDelete(id);
+    console.log(`Venta ${id} eliminada exitosamente`);
+
+    return { success: true, message: 'Venta eliminada correctamente' };
+  } catch (error) {
+    console.error('Error en deleteVentaService:', error);
+    return { success: false, message: `Error al eliminar la venta: ${error.message}` };
   }
-
-  await Venta.findByIdAndDelete(id);
-  return true;
 }
 
 // ===== RUTAS CRUD PRINCIPALES =====
 
 // Ruta para obtener todas las ventas
 router.get('/', authenticate, async (req, res) => {
-  const userId = req.user.id;
-
   try {
-    // Obtener todas las ventas del usuario sin paginación
-    const ventas = await Venta.find({ userId })
-      .sort({ fechadeVenta: -1 })  // Ordenar por fecha descendente
-      .populate('productoId')       // Información del producto
-      .populate('colaboradorId');   // Información del colaborador
-
-    // 🔍 LOG PARA VERIFICAR
-    console.log('Ventas desde DB:', ventas.map(v => ({
-      id: v._id,
-      fechadeVenta: v.fechadeVenta,
-      fechaISO: v.fechadeVenta.toISOString()
-    })));
-
-
-    // Contar total de ventas (opcional, pero útil para saber cuántas hay)
-    const totalVentas = ventas.length;
-
-    // Responder con todas las ventas
-    res.json({
-      ventas,
-      totalVentas,
-      totalPages: 1,  // Al no haber paginación, solo hay 1 página
-      currentPage: 1
-    });
+    const userId = req.user.id;
+    console.log('Obteniendo ventas para usuario:', userId);
+    
+    const ventas = await getVentasService(userId);
+    console.log(`Se encontraron ${ventas.length} ventas`);
+    
+    res.json(ventas);
   } catch (error) {
     console.error('Error al obtener ventas:', error);
-    res.status(500).json({ message: 'Error al obtener ventas' });
+    res.status(500).json({ 
+      message: 'Error al obtener las ventas',
+      error: error.message 
+    });
   }
 });
 
 
 // Ruta para crear una nueva venta
 router.post('/', authenticate, async (req, res) => {
-  const { colaboradorId, productoId, cantidad, montoTotal, estadoPago, cantidadPagada,fechadeVenta } = req.body;
-  const userId = req.user.id;
-
   try {
-    // Validar existencia de colaborador
+    const { 
+      colaboradorId, 
+      detalles,
+      total,
+      estadoPago, 
+      cantidadPagada,
+      fechadeVenta 
+    } = req.body;
+    
+    const userId = req.user.id;
+    console.log('Datos recibidos:', { colaboradorId, detalles, total, estadoPago, cantidadPagada, fechadeVenta });
+
+    // Validar datos requeridos
+    if (!colaboradorId || !detalles || !Array.isArray(detalles) || detalles.length === 0) {
+      return res.status(400).json({ 
+        message: 'Datos incompletos. Se requiere colaboradorId y al menos un detalle de venta' 
+      });
+    }
+
+    // Validar existencia del colaborador
     const colaborador = await Colaborador.findById(colaboradorId);
     if (!colaborador) {
       return res.status(400).json({ message: 'Colaborador no encontrado' });
     }
-    
-    // Validar producto
-    const producto = await Producto.findById(productoId);
-    if (!producto) {
-      return res.status(400).json({ message: 'Producto no encontrado' });
+
+    // Validar productos y stock antes de hacer cualquier cambio
+    for (const detalle of detalles) {
+      const producto = await Producto.findById(detalle.productoId);
+      if (!producto) {
+        return res.status(400).json({ 
+          message: `Producto no encontrado: ${detalle.productoId}` 
+        });
+      }
+      if (producto.cantidadRestante < detalle.cantidad) {
+        return res.status(400).json({ 
+          message: `Stock insuficiente para el producto ${producto.nombre}` 
+        });
+      }
     }
 
-    // Verificar stock disponible
-    if (cantidad > producto.cantidadRestante) {
-      return res.status(400).json({ message: `No hay suficiente stock. Solo hay ${producto.cantidadRestante} unidades disponibles.` });
+    try {
+      // 1. Crear la venta principal
+      const nuevaVenta = new Venta({
+        userId,
+        colaboradorId,
+        subtotal: total, // Usar el total como subtotal ya que no hay IGV
+        montoTotal: total,
+        estadoPago: estadoPago || 'Pendiente',
+        cantidadPagada: cantidadPagada || 0,
+        fechadeVenta: fechadeVenta ? convertirFechaALocalUtc(fechadeVenta) : obtenerFechaActual(),
+        detalles: [] // Se llenarán después
+      });
+
+      // 2. Guardar la venta
+      const ventaGuardada = await nuevaVenta.save();
+      console.log('Venta principal guardada:', ventaGuardada);
+
+      // 3. Procesar cada detalle
+      const detallesGuardados = [];
+      for (const detalle of detalles) {
+        // Crear y guardar el detalle
+        const nuevoDetalle = new DetalleVenta({
+          ventaId: ventaGuardada._id,
+          productoId: detalle.productoId,
+          cantidad: detalle.cantidad,
+          precioUnitario: detalle.precioUnitario,
+          subtotal: detalle.subtotal
+        });
+
+        const detalleGuardado = await nuevoDetalle.save();
+        detallesGuardados.push(detalleGuardado);
+
+        // Actualizar stock del producto
+        await Producto.findByIdAndUpdate(
+          detalle.productoId,
+          {
+            $inc: {
+              cantidadVendida: detalle.cantidad,
+              cantidadRestante: -detalle.cantidad
+            }
+          }
+        );
+      }
+
+      // 4. Actualizar la venta con los detalles
+      ventaGuardada.detalles = detallesGuardados.map(d => d._id);
+      await ventaGuardada.save();
+
+      // 5. Obtener la venta completa con sus relaciones
+      const ventaCompleta = await Venta.findById(ventaGuardada._id)
+        .populate('colaboradorId')
+        .populate({
+          path: 'detalles',
+          populate: {
+            path: 'productoId'
+          }
+        });
+
+      res.status(201).json(ventaCompleta);
+
+    } catch (error) {
+      console.error('Error durante el proceso de venta:', error);
+      throw new Error('Error al procesar la venta: ' + error.message);
     }
 
-    // Validar estado de pago
-    if (estadoPago === 'Parcial' && cantidadPagada <= 0) {
-      return res.status(400).json({ message: 'La cantidad pagada debe ser mayor a cero cuando el estado es Parcial.' });
-    }
-
-    if (estadoPago === 'Pendiente' && cantidadPagada !== 0) {
-      return res.status(400).json({ message: 'La cantidad pagada debe ser cero cuando el estado es Pendiente.' });
-    }
-
-    if (estadoPago === 'Pagado' && cantidadPagada !== montoTotal) {
-      return res.status(400).json({ message: 'La cantidad pagada debe ser igual al monto total cuando el estado es Pagado.' });
-    }
-
-    const fechaVenta = fechadeVenta ? convertirFechaALocalUtc(fechadeVenta) : convertirFechaALocalUtc(obtenerFechaActual());
-
-
-    // Crear la venta
-    const ventaData = {
-      colaboradorId,
-      productoId,
-      cantidad,
-      montoTotal,
-      estadoPago,
-      cantidadPagada,
-      userId,
-      fechadeVenta: fechaVenta
-    };
-
-  if (fechadeVenta) {
-    ventaData.fechadeVenta = new Date(fechadeVenta);  // convertir string a fecha
-  }
-
-    const nuevaVenta = await createVentaService(ventaData);
-    res.status(201).json(nuevaVenta);
   } catch (error) {
-    console.error('Error al agregar la venta:', error.message);
-    res.status(500).json({ message: `Error al agregar la venta: ${error.message}` });
+    console.error('Error al crear venta:', error);
+    res.status(500).json({ 
+      message: 'Error al crear la venta',
+      error: error.message 
+    });
   }
 });
 
@@ -193,19 +292,33 @@ router.delete('/:id', authenticate, async (req, res) => {
   const userId = req.user.id;
   
   try {
+    console.log(`Solicitud de eliminación de venta: ${id} por usuario: ${userId}`);
+    
+    // Validar que el ID sea un ObjectId válido
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'ID de venta no válido' });
+    }
+    
     const resultado = await deleteVentaService(id, userId);
     
-    if (!resultado) {
-      return res.status(404).json({ message: 'Venta no encontrada' });
+    if (!resultado.success) {
+      if (resultado.message.includes('no encontrada')) {
+        return res.status(404).json({ message: resultado.message });
+      } else if (resultado.message.includes('devoluciones asociadas')) {
+        return res.status(400).json({ message: resultado.message });
+      } else {
+        return res.status(500).json({ message: resultado.message });
+      }
     }
     
-    res.status(204).send();
+    console.log(`Venta ${id} eliminada exitosamente`);
+    res.status(200).json({ message: resultado.message });
   } catch (error) {
     console.error('Error al eliminar la venta:', error);
-        if (error.message.includes('devoluciones asociadas')) {
-      return res.status(400).json({ message: error.message });
-    }
-    res.status(500).json({ message: 'Error al eliminar la venta.' });
+    res.status(500).json({ 
+      message: 'Error interno del servidor al eliminar la venta',
+      error: error.message 
+    });
   }
 });
 
@@ -216,10 +329,10 @@ router.get('/devoluciones', authenticate, async (req, res) => {
   
   try {
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    
-    const devoluciones = await Devolucion.find({ userId })
+      const devoluciones = await Devolucion.find({ userId })
       .populate({
         path: 'ventaId',
+        select: 'fechaVenta fechadeVenta montoTotal estadoPago', // Incluir explícitamente los campos de fecha
         populate: { 
           path: 'colaboradorId',
           model: 'Colaborador',
@@ -234,6 +347,18 @@ router.get('/devoluciones', authenticate, async (req, res) => {
     const total = await Devolucion.countDocuments({ userId });
     
     console.log('Devoluciones encontradas:', devoluciones); // Para debugging
+    
+    // Debug adicional - verificar estructura de ventas
+    devoluciones.forEach((dev, index) => {
+      console.log(`🔍 Devolución ${index + 1}:`, {
+        id: dev._id,
+        ventaId: dev.ventaId?._id,
+        fechaVenta: dev.ventaId?.fechaVenta,
+        fechadeVenta: dev.ventaId?.fechadeVenta,
+        colaborador: dev.ventaId?.colaboradorId?.nombre,
+        producto: dev.productoId?.nombre
+      });
+    });
 
     res.json({
       devoluciones,
@@ -535,6 +660,44 @@ router.get('/reportes/ventas', authenticate, async (req, res) => {
   } catch (error) {
     console.error('Error al obtener el informe de ventas:', error);
     res.status(500).json({ message: 'Error al obtener el informe de ventas', error: error.message });
+  }
+});
+
+// Ruta para obtener una venta específica por ID
+router.get('/:id', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+  
+  try {
+    // Validar que el ID sea un ObjectId válido
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'ID de venta no válido' });
+    }
+
+    console.log(`Obteniendo venta ${id} para usuario ${userId}`);
+    
+    const venta = await Venta.findOne({ _id: id, userId })
+      .populate('colaboradorId', 'nombre')
+      .populate({
+        path: 'detalles',
+        populate: {
+          path: 'productoId',
+          select: 'nombre precio cantidadRestante'
+        }
+      });
+    
+    if (!venta) {
+      return res.status(404).json({ message: 'Venta no encontrada' });
+    }
+    
+    console.log(`Venta encontrada:`, venta);
+    res.json(venta);
+  } catch (error) {
+    console.error('Error al obtener la venta:', error);
+    res.status(500).json({ 
+      message: 'Error al obtener la venta',
+      error: error.message 
+    });
   }
 });
 
