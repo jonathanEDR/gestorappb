@@ -12,6 +12,7 @@ const cobroRoutes = require('./routes/cobroRoutes'); // Importar las rutas de co
 const chatbotRoutes = require('./routes/chatbotRoutes');
 const GastoRoutes = require('./routes/GastoRoutes'); 
 const gestionPersonalRoutes = require('./routes/gestionPersonalRoutes');
+const pagosRealizadosRoutes = require('./routes/pagosRealizadosRoutes');
 
 
 // Crear servidor
@@ -47,7 +48,8 @@ app.use('/api/colaboradores', colaboradorRoutes);  // Asegúrate de que la ruta 
 app.use('/api/cobros', cobroRoutes); // Usar las rutas para los cobros
 app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/gastos', GastoRoutes); 
-app.use('/api/gestion-Personal', gestionPersonalRoutes); 
+app.use('/api/gestion-personal', gestionPersonalRoutes); 
+app.use('/api/pagos-realizados', pagosRealizadosRoutes);
 
 // Conexión a la base de datos
 const mongodbUri = process.env.MONGODB_URI;

@@ -123,7 +123,7 @@ async function getDebtByDateRange(colaboradorId, deudaRange) {
       fechaVenta: { $gte: startDate, $lte: endDate }
     });
 
-    const totalDebt = ventas.reduce((sum, venta) => sum + (venta.debe || 0), 0);
+    const totalDebt = ventas.reduce((sum, venta) => sum + (venta.montoTotal || 0), 0);
     const totalPaid = ventas.reduce((sum, venta) => sum + (venta.cantidadPagada || 0), 0);
 
     return {
@@ -158,9 +158,8 @@ router.get('/colaboradores-con-deudas', authenticate, async (req, res) => {
         let deudaTotal = 0;
         let totalPagado = 0;
         let ventasPendientes = 0;
-        
-        for (const venta of ventas) {
-          const deuda = venta.debe || 0;
+          for (const venta of ventas) {
+          const deuda = venta.montoTotal || 0; // Usar montoTotal como deuda base
           const pagado = venta.cantidadPagada || 0;
           
           deudaTotal += deuda;
@@ -214,10 +213,8 @@ router.post('/', authenticate, async (req, res) => {
     const venta = await Venta.findOne({ _id: ventaId, userId });
     if (!venta) {
       return res.status(404).json({ message: 'Venta no encontrada' });
-    }
-
-    // Verificar que la venta tiene deuda pendiente
-    const deudaTotal = venta.debe || 0;
+    }    // Verificar que la venta tiene deuda pendiente
+    const deudaTotal = venta.montoTotal || 0; // Usar montoTotal como deuda base
     const yaaPagado = venta.cantidadPagada || 0;
     const deudaPendiente = deudaTotal - yaaPagado;
 
@@ -310,13 +307,95 @@ router.delete('/:id', authenticate, async (req, res) => {
   const userId = req.user.id;
 
   try {
-    const deletedCobro = await Cobro.findOneAndDelete({ _id: id, userId });
-    if (!deletedCobro) {
+    console.log('🔍 DEBUG: Iniciando eliminación de cobro:', id);
+    
+    // Buscar el cobro antes de eliminarlo para obtener la información
+    const cobro = await Cobro.findOne({ _id: id, userId }).populate('ventaId');
+    if (!cobro) {
       return res.status(404).json({ message: 'Cobro no encontrado o no pertenece al usuario' });
+    }    console.log('🔍 DEBUG: Cobro encontrado:', {
+      id: cobro._id,
+      monto: cobro.montoPagado, // CORRECCIÓN: Usar montoPagado
+      ventaId: cobro.ventaId?._id,
+      fecha: cobro.fechaPago
+    });
+
+    // Validar que el cobro tenga venta asociada
+    if (!cobro.ventaId) {
+      return res.status(400).json({ message: 'El cobro no tiene una venta asociada válida' });
     }
-    res.status(204).send();
+
+    // Obtener la venta actual
+    const venta = await Venta.findById(cobro.ventaId._id);
+    if (!venta) {
+      return res.status(404).json({ message: 'Venta asociada no encontrada' });
+    }
+
+    console.log('🔍 DEBUG: Venta antes de actualizar:', {
+      id: venta._id,
+      montoTotal: venta.montoTotal,
+      cantidadPagada: venta.cantidadPagada,
+      estadoPago: venta.estadoPago
+    });    // Validar los valores antes del cálculo
+    const montoCobroActual = Number(cobro.montoPagado) || 0; // CORRECCIÓN: Usar montoPagado
+    const cantidadPagadaActual = Number(venta.cantidadPagada) || 0;
+    const montoTotalVenta = Number(venta.montoTotal) || 0;
+
+    // Calcular nueva cantidad pagada (restar el cobro eliminado)
+    const nuevaCantidadPagada = Math.max(0, cantidadPagadaActual - montoCobroActual);
+
+    // Recalcular estado de pago
+    let nuevoEstadoPago = 'Pendiente';
+    if (nuevaCantidadPagada >= montoTotalVenta) {
+      nuevoEstadoPago = 'Pagado';
+    } else if (nuevaCantidadPagada > 0) {
+      nuevoEstadoPago = 'Parcial';
+    }
+
+    console.log('🔍 DEBUG: Cálculos:', {
+      montoCobroActual,
+      cantidadPagadaActual,
+      nuevaCantidadPagada,
+      montoTotalVenta,
+      nuevoEstadoPago
+    });
+
+    // Actualizar la venta
+    const ventaActualizada = await Venta.findByIdAndUpdate(
+      cobro.ventaId._id,
+      {
+        cantidadPagada: nuevaCantidadPagada,
+        estadoPago: nuevoEstadoPago
+      },
+      { new: true }
+    );
+
+    console.log('🔍 DEBUG: Venta actualizada:', {
+      id: ventaActualizada._id,
+      cantidadPagada: ventaActualizada.cantidadPagada,
+      estadoPago: ventaActualizada.estadoPago
+    });
+
+    // Eliminar el cobro
+    await Cobro.findByIdAndDelete(id);
+
+    console.log('✅ DEBUG: Cobro eliminado exitosamente y venta actualizada');
+
+    res.json({ 
+      message: 'Cobro eliminado correctamente y venta actualizada',
+      venta: {
+        id: ventaActualizada._id,
+        cantidadPagada: ventaActualizada.cantidadPagada,
+        estadoPago: ventaActualizada.estadoPago
+      }
+    });
+
   } catch (error) {
-    res.status(500).json({ message: 'Error al eliminar el cobro' });
+    console.error('❌ Error al eliminar el cobro:', error);
+    res.status(500).json({ 
+      message: 'Error al eliminar el cobro',
+      error: error.message 
+    });
   }
 });
 
@@ -508,7 +587,7 @@ router.get('/ventas-pendientes-individuales', authenticate, async (req, res) => 
     // Procesar cada venta para obtener información completa
     const ventasPendientes = await Promise.all(
       ventas.map(async (venta) => {
-        const deuda = venta.debe || 0;
+        const deuda = venta.montoTotal || 0; // Usar montoTotal como deuda base
         const montoPagado = venta.cantidadPagada || 0;
         
         // Solo incluir ventas con deuda pendiente
@@ -616,18 +695,23 @@ router.get('/test-ventas-deudas', authenticate, async (req, res) => {
         const devoluciones = await Devolucion.find({ ventaId: venta._id, userId });
         
         const sumaPagos = cobros.reduce((sum, c) => sum + (c.montoPagado || 0), 0);
-        const sumaDevoluciones = devoluciones.reduce((sum, d) => sum + (d.monto || 0), 0);
+        const sumaDevoluciones = devoluciones.reduce((sum, d) => sum + (d.monto || 0), 0);        console.log(`🔍 DEBUG Cálculo de deuda para venta ${venta._id}:`, {
+          montoTotal: venta.montoTotal,
+          sumaPagos: sumaPagos,
+          sumaDevoluciones: sumaDevoluciones,
+          deudaPendienteCalculada: venta.montoTotal - sumaPagos - sumaDevoluciones
+        });
         
         return {
           _id: venta._id,
           colaborador: venta.colaboradorId?.nombre || 'Sin colaborador',
           fechaVenta: venta.fechaVenta,
           montoTotal: venta.montoTotal,
-          debe: venta.debe,
+          debe: venta.montoTotal, // Total Debe = Total Venta (siempre)
           cantidadPagada: venta.cantidadPagada,
           sumaPagos: sumaPagos,
           sumaDevoluciones: sumaDevoluciones,
-          deudaPendiente: (venta.debe || 0) - sumaPagos,
+          deudaPendiente: venta.montoTotal - sumaPagos - sumaDevoluciones, // Restar devoluciones de la deuda
           detallesCount: venta.detalles?.length || 0,
           detalles: venta.detalles?.map(d => ({
             producto: d.productoId?.nombre || 'Sin nombre',
